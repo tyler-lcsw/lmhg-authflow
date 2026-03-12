@@ -1,0 +1,705 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Kentucky Medicaid MCO Prior Authorization Request Form</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            font-size: 11px;
+            line-height: 1.3;
+            background-color: #f5f5f5;
+            padding: 15px;
+        }
+
+        .form-container {
+            max-width: 8.5in;
+            margin: 0 auto;
+            background-color: white;
+            padding: 15px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        .header {
+            background-color: #000;
+            color: white;
+            text-align: center;
+            padding: 12px;
+            margin-bottom: 15px;
+        }
+
+        .header h1 {
+            font-size: 16px;
+            font-weight: bold;
+            line-height: 1.2;
+        }
+
+        .section {
+            margin-bottom: 15px;
+            border: 1px solid #ccc;
+            padding: 8px;
+        }
+
+        .section-title {
+            background-color: #e0e0e0;
+            font-weight: bold;
+            padding: 4px;
+            margin-bottom: 8px;
+            text-align: center;
+            font-size: 11px;
+        }
+
+        .mco-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .mco-item {
+            border: 1px solid #666;
+            padding: 6px;
+            text-align: center;
+            font-size: 10px;
+        }
+
+        .form-row {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            justify-content: space-between;
+        }
+
+        .form-row-equal {
+            display: flex;
+            gap: 15px;
+            margin-bottom: 8px;
+            align-items: center;
+        }
+
+        .form-row-equal > * {
+            flex: 1;
+        }
+
+        .form-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex: 1;
+        }
+
+        .form-group-block {
+            margin-bottom: 8px;
+        }
+
+        input[type="text"], input[type="tel"], input[type="email"], input[type="date"] {
+            border: none;
+            border-bottom: 1px solid #000;
+            padding: 1px 3px;
+            font-size: 10px;
+            background: transparent;
+            min-width: 80px;
+            flex: 1;
+            max-width: 200px;
+        }
+
+        input[type="text"].short {
+            min-width: 60px;
+            max-width: 80px;
+        }
+
+        input[type="text"].medium {
+            min-width: 80px;
+            max-width: 120px;
+        }
+
+        input[type="text"].long {
+            min-width: 120px;
+            max-width: 180px;
+        }
+
+        input[type="checkbox"], input[type="radio"] {
+            margin-right: 3px;
+        }
+
+        .checkbox-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 4px;
+            margin-top: 8px;
+            font-size: 10px;
+        }
+
+        .service-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 8px;
+            font-size: 9px;
+        }
+
+        .service-table th, .service-table td {
+            border: 1px solid #000;
+            padding: 2px;
+            text-align: center;
+            vertical-align: middle;
+        }
+
+        .service-table th {
+            background-color: #e0e0e0;
+            font-weight: bold;
+            font-size: 8px;
+            line-height: 1.1;
+        }
+
+        .service-table input {
+            width: 100%;
+            border: none;
+            text-align: center;
+            font-size: 8px;
+            padding: 1px;
+        }
+
+        label {
+            font-weight: normal;
+            font-size: 10px;
+            white-space: nowrap;
+        }
+
+        .note {
+            font-style: italic;
+            color: #666;
+            text-align: center;
+            margin: 8px 0;
+            font-size: 9px;
+        }
+
+        textarea {
+            font-size: 10px;
+            line-height: 1.2;
+        }
+
+        /* Responsive font sizing for inputs */
+        input[type="text"]:focus,
+        input[type="tel"]:focus,
+        input[type="date"]:focus {
+            font-size: 9px;
+        }
+
+        /* Two column layout for some sections to save space */
+        .two-column {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 15px;
+        }
+
+        @media print {
+            body {
+                background: white;
+                padding: 0;
+                font-size: 10px;
+            }
+            
+            .form-container {
+                box-shadow: none;
+                padding: 10px;
+                max-width: none;
+                width: 100%;
+            }
+            
+            button {
+                display: none !important;
+            }
+            
+            .header h1 {
+                font-size: 14px;
+            }
+            
+            .service-table {
+                font-size: 8px;
+            }
+            
+            .service-table th {
+                font-size: 7px;
+            }
+            
+            .service-table input {
+                font-size: 7px;
+            }
+            
+            input[type="text"], 
+            input[type="tel"], 
+            input[type="date"] {
+                font-size: 9px;
+            }
+            
+            .section {
+                margin-bottom: 10px;
+                padding: 6px;
+            }
+            
+            .mco-item {
+                font-size: 9px;
+                padding: 4px;
+            }
+        }
+    </style>
+</head>
+<body>
+    
+    <div class="form-container">
+        <div class="header">
+            <h1>MAP 9 – MCO 2022<br>Kentucky Medicaid MCO Prior Authorization Request Form</h1>
+        </div>
+
+        <!-- MCO Selection -->
+        <div class="section">
+            <div class="section-title">Check the box of the MCO in which the member is enrolled</div>
+            <div class="mco-grid">
+                <div class="mco-item">
+                    <input type="checkbox" id="aetna" name="mco" value="aetna" <%= (Array.isArray(data.mco) ? data.mco.includes('aetna') : data.mco === 'aetna') ? 'checked' : '' %>>
+                    <label for="aetna">Aetna Better Health of Kentucky</label>
+                </div>
+                <div class="mco-item">
+                    <input type="checkbox" id="united" name="mco" value="united" <%= (Array.isArray(data.mco) ? data.mco.includes('united') : data.mco === 'united') ? 'checked' : '' %>>
+                    <label for="united">UnitedHealthcare Community Plan</label>
+                </div>
+                <div class="mco-item">
+                    <input type="checkbox" id="humana" name="mco" value="humana" <%= (Array.isArray(data.mco) ? data.mco.includes('humana') : data.mco === 'humana') ? 'checked' : '' %>>
+                    <label for="humana">Humana Healthy Horizons in Kentucky</label>
+                </div>
+                <div class="mco-item">
+                    <input type="checkbox" id="passport" name="mco" value="passport" <%= (Array.isArray(data.mco) ? data.mco.includes('passport') : data.mco === 'passport') ? 'checked' : '' %>>
+                    <label for="passport">Passport Health Plan by Molina Healthcare</label>
+                </div>
+                <div class="mco-item">
+                    <input type="checkbox" id="wellcare" name="mco" value="wellcare" <%= (Array.isArray(data.mco) ? data.mco.includes('wellcare') : data.mco === 'wellcare') ? 'checked' : '' %>>
+                    <label for="wellcare">WellCare of Kentucky</label>
+                </div>
+                <div class="mco-item">
+                    <input type="checkbox" id="anthem" name="mco" value="anthem" <%= (Array.isArray(data.mco) ? data.mco.includes('anthem') : data.mco === 'anthem') ? 'checked' : '' %>>
+                    <label for="anthem">Anthem Blue Cross Blue Shield</label>
+                </div>
+            </div>
+            <div class="note">Not all plans require PAs for the same services. Check with the plan before submitting<br>
+            Please complete all appropriate fields<br>
+            Failure to provide sufficient information will result in a delay in your request</div>
+        </div>
+
+        <!-- Date and Time -->
+        <div class="form-row-equal">
+            <div class="form-group">
+                <label>Date</label>
+                <input type="date" name="date" value="<%= data.date || '' %>">
+            </div>
+            <div class="form-group">
+                <label>Time Faxed/Emailed</label>
+                <input type="text" name="time_faxed" class="medium" value="<%= data.time_faxed || '' %>">
+            </div>
+        </div>
+
+        <!-- Type of Request -->
+        <div class="section">
+            <div class="section-title">Type of Request</div>
+            <div class="form-row">
+                <div class="form-group">
+                    <input type="radio" id="urgent" name="request_type" value="urgent" <%= data.request_type === 'urgent' ? 'checked' : '' %>>
+                    <label for="urgent">Urgent (defined as 'significant impact to health of member')</label>
+                </div>
+                <div class="form-group">
+                    <input type="radio" id="non_urgent" name="request_type" value="non_urgent" <%= data.request_type === 'non_urgent' ? 'checked' : '' %>>
+                    <label for="non_urgent">Non-Urgent</label>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <input type="checkbox" id="pre_service" name="service_timing" value="pre_service" <%= (Array.isArray(data.service_timing) ? data.service_timing.includes('pre_service') : data.service_timing === 'pre_service') ? 'checked' : '' %>>
+                    <label for="pre_service">Pre-Service</label>
+                </div>
+                <div class="form-group">
+                    <input type="checkbox" id="post_service" name="service_timing" value="post_service" <%= (Array.isArray(data.service_timing) ? data.service_timing.includes('post_service') : data.service_timing === 'post_service') ? 'checked' : '' %>>
+                    <label for="post_service">Post-Service</label>
+                </div>
+                <div class="form-group">
+                    <input type="checkbox" id="concurrent" name="service_timing" value="concurrent" <%= (Array.isArray(data.service_timing) ? data.service_timing.includes('concurrent') : data.service_timing === 'concurrent') ? 'checked' : '' %>>
+                    <label for="concurrent">Concurrent</label>
+                </div>
+                <div class="form-group">
+                    <input type="checkbox" id="emergent" name="service_timing" value="emergent" <%= (Array.isArray(data.service_timing) ? data.service_timing.includes('emergent') : data.service_timing === 'emergent') ? 'checked' : '' %>>
+                    <label for="emergent">Emergent</label>
+                </div>
+            </div>
+        </div>
+
+        <!-- Member Information -->
+        <div class="section">
+            <div class="section-title">Member Information</div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Member Name</label>
+                    <input type="text" name="member_name" class="long" value="<%= data.member_name || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>Medicaid ID #</label>
+                    <input type="text" name="medicaid_id" class="medium" value="<%= data.medicaid_id || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>MCO ID#</label>
+                    <input type="text" name="mco_id" class="medium" value="<%= data.mco_id || '' %>">
+                </div>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Date of Birth</label>
+                    <input type="date" name="dob" value="<%= data.dob || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>Is member Pregnant?</label>
+                    <input type="radio" id="pregnant_yes" name="pregnant" value="yes" <%= data.pregnant === 'yes' ? 'checked' : '' %>>
+                    <label for="pregnant_yes">Yes</label>
+                    <input type="radio" id="pregnant_no" name="pregnant" value="no" <%= data.pregnant === 'no' ? 'checked' : '' %>>
+                    <label for="pregnant_no">No</label>
+                </div>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Member's PCP</label>
+                    <input type="text" name="pcp" class="long" value="<%= data.pcp || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" name="pcp_phone" class="medium" value="<%= data.pcp_phone || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>NPI</label>
+                    <input type="text" name="pcp_npi" class="medium" value="<%= data.pcp_npi || '' %>">
+                </div>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Work-related injury?</label>
+                    <input type="radio" id="work_injury_yes" name="work_injury" value="yes" <%= data.work_injury === 'yes' ? 'checked' : '' %>>
+                    <label for="work_injury_yes">Yes</label>
+                    <input type="radio" id="work_injury_no" name="work_injury" value="no" <%= data.work_injury === 'no' ? 'checked' : '' %>>
+                    <label for="work_injury_no">No</label>
+                </div>
+                <div class="form-group">
+                    <label>Motor Vehicle Accident related injury?</label>
+                    <input type="radio" id="mva_yes" name="mva" value="yes" <%= data.mva === 'yes' ? 'checked' : '' %>>
+                    <label for="mva_yes">Yes</label>
+                    <input type="radio" id="mva_no" name="mva" value="no" <%= data.mva === 'no' ? 'checked' : '' %>>
+                    <label for="mva_no">No</label>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group" style="flex: 1.5; white-space: nowrap;">
+                    <label>Does member have other insurance?</label>
+                    <input type="radio" id="other_ins_yes" name="other_insurance" value="yes" <%= data.other_insurance === 'yes' ? 'checked' : '' %>>
+                    <label for="other_ins_yes">Yes</label>
+                    <input type="radio" id="other_ins_no" name="other_insurance" value="no" <%= data.other_insurance === 'no' ? 'checked' : '' %>>
+                    <label for="other_ins_no">No</label>
+                </div>
+                <div class="form-group" style="flex: 1.5;">
+                    <label>Insurer</label>
+                    <input type="text" name="insurer" style="flex: 1; border: none; border-bottom: 1px solid #000;" value="<%= data.other_insurance === 'yes' ? (data.insurer || '') : '' %>">
+                </div>
+                <div class="form-group" style="flex: 1;">
+                    <label>Medicare?</label>
+                    <input type="checkbox" id="medicare_a" name="medicare" value="part_a" <%= (Array.isArray(data.medicare) ? data.medicare.includes('part_a') : data.medicare === 'part_a') ? 'checked' : '' %>>
+                    <label for="medicare_a">Part A</label>
+                    <input type="checkbox" id="medicare_b" name="medicare" value="part_b" <%= (Array.isArray(data.medicare) ? data.medicare.includes('part_b') : data.medicare === 'part_b') ? 'checked' : '' %>>
+                    <label for="medicare_b">Part B</label>
+                </div>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Requesting Provider</label>
+                    <input type="text" name="requesting_provider" class="long" value="<%= data.requesting_provider || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" name="req_provider_phone" class="medium" value="<%= data.req_provider_phone || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>NPI #</label>
+                    <input type="text" name="req_provider_npi" class="medium" value="<%= data.req_provider_npi || '' %>">
+                </div>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Fax #</label>
+                    <input type="tel" name="req_provider_fax" class="medium" value="<%= data.req_provider_fax || '' %>">
+                </div>
+                <div class="form-group"></div>
+                <div class="form-group"></div>
+            </div>
+        </div>
+
+        <!-- Servicing Provider Information -->
+        <div class="section">
+            <div class="section-title">Servicing Provider Information</div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Servicing Provider</label>
+                    <input type="text" name="servicing_provider" class="long" value="<%= data.servicing_provider || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>NPI</label>
+                    <input type="text" name="serv_provider_npi" class="medium" value="<%= data.serv_provider_npi || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>Tax ID#</label>
+                    <input type="text" name="serv_provider_tax_id" class="medium" value="<%= data.serv_provider_tax_id || '' %>">
+                </div>
+            </div>
+            <div class="form-group-block">
+                <label>Address</label>
+                <input type="text" name="serv_provider_address" class="long" value="<%= data.serv_provider_address || '' %>">
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>City</label>
+                    <input type="text" name="serv_provider_city" class="medium" value="<%= data.serv_provider_city || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>State</label>
+                    <input type="text" name="serv_provider_state" class="short" value="<%= data.serv_provider_state || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>ZIP</label>
+                    <input type="text" name="serv_provider_zip" class="short" value="<%= data.serv_provider_zip || '' %>">
+                </div>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" name="serv_provider_phone" class="medium" value="<%= data.serv_provider_phone || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>Fax#</label>
+                    <input type="tel" name="serv_provider_fax" class="medium" value="<%= data.serv_provider_fax || '' %>">
+                </div>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Are any supporting documents included?</label>
+                    <input type="radio" id="docs_yes" name="supporting_docs" value="yes" <%= data.supporting_docs === 'yes' ? 'checked' : '' %>>
+                    <label for="docs_yes">Yes</label>
+                    <input type="radio" id="docs_no" name="supporting_docs" value="no" <%= data.supporting_docs === 'no' ? 'checked' : '' %>>
+                    <label for="docs_no">No</label>
+                </div>
+                <div class="form-group">
+                    <label>Number of Documents</label>
+                    <input type="text" name="num_docs" class="short" value="<%= data.num_docs || '' %>">
+                </div>
+            </div>
+        </div>
+
+        <!-- Servicing Facility -->
+        <div class="section">
+            <div class="section-title">Servicing Facility</div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Servicing Facility</label>
+                    <input type="text" name="servicing_facility" class="long" value="<%= data.servicing_facility || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>NPI</label>
+                    <input type="text" name="serv_facility_npi" class="medium" value="<%= data.serv_facility_npi || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>Tax ID#</label>
+                    <input type="text" name="serv_facility_tax_id" class="medium" value="<%= data.serv_facility_tax_id || '' %>">
+                </div>
+            </div>
+            <div class="form-group-block">
+                <label>Address</label>
+                <input type="text" name="serv_facility_address" class="long" value="<%= data.serv_facility_address || '' %>">
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>City</label>
+                    <input type="text" name="serv_facility_city" class="medium" value="<%= data.serv_facility_city || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>State</label>
+                    <input type="text" name="serv_facility_state" class="short" value="<%= data.serv_facility_state || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>ZIP</label>
+                    <input type="text" name="serv_facility_zip" class="short" value="<%= data.serv_facility_zip || '' %>">
+                </div>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>Phone</label>
+                    <input type="tel" name="serv_facility_phone" class="medium" value="<%= data.serv_facility_phone || '' %>">
+                </div>
+                <div class="form-group">
+                    <label>Fax#</label>
+                    <input type="tel" name="serv_facility_fax" class="medium" value="<%= data.serv_facility_fax || '' %>">
+                </div>
+            </div>
+        </div>
+
+        <!-- Type of Service -->
+        <div class="section">
+            <div class="section-title">Type of Service</div>
+            <div class="checkbox-grid">
+                <div><input type="checkbox" id="behavioral_health" name="service_type" value="behavioral_health" <%= (Array.isArray(data.service_type) ? data.service_type.includes('behavioral_health') : data.service_type === 'behavioral_health') ? 'checked' : '' %>><label for="behavioral_health">Behavioral Health</label></div>
+                <div><input type="checkbox" id="epsd" name="service_type" value="epsd" <%= (Array.isArray(data.service_type) ? data.service_type.includes('epsd') : data.service_type === 'epsd') ? 'checked' : '' %>><label for="epsd">EPSD</label></div>
+                <div><input type="checkbox" id="medical_inpatient" name="service_type" value="medical_inpatient" <%= (Array.isArray(data.service_type) ? data.service_type.includes('medical_inpatient') : data.service_type === 'medical_inpatient') ? 'checked' : '' %>><label for="medical_inpatient">Medical Care - Inpatient</label></div>
+                
+                <div><input type="checkbox" id="behavioral_inpatient" name="service_type" value="behavioral_inpatient" <%= (Array.isArray(data.service_type) ? data.service_type.includes('behavioral_inpatient') : data.service_type === 'behavioral_inpatient') ? 'checked' : '' %>><label for="behavioral_inpatient">Behavioral Health - Inpatient Case Mgmt</label></div>
+                <div><input type="checkbox" id="gastric_bypass" name="service_type" value="gastric_bypass" <%= (Array.isArray(data.service_type) ? data.service_type.includes('gastric_bypass') : data.service_type === 'gastric_bypass') ? 'checked' : '' %>><label for="gastric_bypass">Gastric By-pass</label></div>
+                <div><input type="checkbox" id="medical_outpatient" name="service_type" value="medical_outpatient" <%= (Array.isArray(data.service_type) ? data.service_type.includes('medical_outpatient') : data.service_type === 'medical_outpatient') ? 'checked' : '' %>><label for="medical_outpatient">Medical Care - Outpatient</label></div>
+                
+                <div><input type="checkbox" id="clinical_trial" name="service_type" value="clinical_trial" <%= (Array.isArray(data.service_type) ? data.service_type.includes('clinical_trial') : data.service_type === 'clinical_trial') ? 'checked' : '' %>><label for="clinical_trial">Clinical trial</label></div>
+                <div><input type="checkbox" id="home_health" name="service_type" value="home_health" <%= (Array.isArray(data.service_type) ? data.service_type.includes('home_health') : data.service_type === 'home_health') ? 'checked' : '' %>><label for="home_health">Home Health</label></div>
+                <div><input type="checkbox" id="observation" name="service_type" value="observation" <%= (Array.isArray(data.service_type) ? data.service_type.includes('observation') : data.service_type === 'observation') ? 'checked' : '' %>><label for="observation">Observation</label></div>
+                
+                <div><input type="checkbox" id="dental_care" name="service_type" value="dental_care" <%= (Array.isArray(data.service_type) ? data.service_type.includes('dental_care') : data.service_type === 'dental_care') ? 'checked' : '' %>><label for="dental_care">Dental Care</label></div>
+                <div><input type="checkbox" id="hospice" name="service_type" value="hospice" <%= (Array.isArray(data.service_type) ? data.service_type.includes('hospice') : data.service_type === 'hospice') ? 'checked' : '' %>><label for="hospice">Hospice</label></div>
+                <div><input type="checkbox" id="ot_pt_st" name="service_type" value="ot_pt_st" <%= (Array.isArray(data.service_type) ? data.service_type.includes('ot_pt_st') : data.service_type === 'ot_pt_st') ? 'checked' : '' %>><label for="ot_pt_st">OT/PT/ST</label></div>
+                
+                <div><input type="checkbox" id="dme_purchase" name="service_type" value="dme_purchase" <%= (Array.isArray(data.service_type) ? data.service_type.includes('dme_purchase') : data.service_type === 'dme_purchase') ? 'checked' : '' %>><label for="dme_purchase">DME Purchase</label></div>
+                <div><input type="checkbox" id="inhalation_therapy" name="service_type" value="inhalation_therapy" <%= (Array.isArray(data.service_type) ? data.service_type.includes('inhalation_therapy') : data.service_type === 'inhalation_therapy') ? 'checked' : '' %>><label for="inhalation_therapy">Inhalation Therapy</label></div>
+                <div><input type="checkbox" id="oral_surgery" name="service_type" value="oral_surgery" <%= (Array.isArray(data.service_type) ? data.service_type.includes('oral_surgery') : data.service_type === 'oral_surgery') ? 'checked' : '' %>><label for="oral_surgery">Oral Surgery</label></div>
+                
+                <div><input type="checkbox" id="dme_rental" name="service_type" value="dme_rental" <%= (Array.isArray(data.service_type) ? data.service_type.includes('dme_rental') : data.service_type === 'dme_rental') ? 'checked' : '' %>><label for="dme_rental">DME Rental</label></div>
+                <div><input type="checkbox" id="maternity" name="service_type" value="maternity" <%= (Array.isArray(data.service_type) ? data.service_type.includes('maternity') : data.service_type === 'maternity') ? 'checked' : '' %>><label for="maternity">Maternity</label></div>
+                <div><input type="checkbox" id="other" name="service_type" value="other" <%= (Array.isArray(data.service_type) ? data.service_type.includes('other') : data.service_type === 'other') ? 'checked' : '' %>><label for="other">Other</label></div>
+                
+                <div><input type="checkbox" id="private_duty" name="service_type" value="private_duty" <%= (Array.isArray(data.service_type) ? data.service_type.includes('private_duty') : data.service_type === 'private_duty') ? 'checked' : '' %>><label for="private_duty">Private Duty Nursing</label></div>
+                <div><input type="checkbox" id="radiology" name="service_type" value="radiology" <%= (Array.isArray(data.service_type) ? data.service_type.includes('radiology') : data.service_type === 'radiology') ? 'checked' : '' %>><label for="radiology">Radiology</label></div>
+                <div><input type="checkbox" id="substance_abuse" name="service_type" value="substance_abuse" <%= (Array.isArray(data.service_type) ? data.service_type.includes('substance_abuse') : data.service_type === 'substance_abuse') ? 'checked' : '' %>><label for="substance_abuse">Substance Abuse</label></div>
+                
+                <div><input type="checkbox" id="surgical_inpatient" name="service_type" value="surgical_inpatient" <%= (Array.isArray(data.service_type) ? data.service_type.includes('surgical_inpatient') : data.service_type === 'surgical_inpatient') ? 'checked' : '' %>><label for="surgical_inpatient">Surgical - Inpatient</label></div>
+                <div><input type="checkbox" id="surgical_outpatient" name="service_type" value="surgical_outpatient" <%= (Array.isArray(data.service_type) ? data.service_type.includes('surgical_outpatient') : data.service_type === 'surgical_outpatient') ? 'checked' : '' %>><label for="surgical_outpatient">Surgical - Outpatient</label></div>
+                <div><input type="checkbox" id="transportation" name="service_type" value="transportation" <%= (Array.isArray(data.service_type) ? data.service_type.includes('transportation') : data.service_type === 'transportation') ? 'checked' : '' %>><label for="transportation">Transportation</label></div>
+                
+                <div></div>
+                <div></div>
+                <div><input type="checkbox" id="vision" name="service_type" value="vision" <%= (Array.isArray(data.service_type) ? data.service_type.includes('vision') : data.service_type === 'vision') ? 'checked' : '' %>><label for="vision">Vision/Optometry</label></div>
+            </div>
+        </div>
+
+        <!-- Clinical Information -->
+        <div class="section">
+            <div class="section-title">Clinical Information: Request MUST include medical documentation to be reviewed for medical necessity</div>
+            <table class="service-table">
+                <thead>
+                    <tr>
+                        <th style="width: 12%;">Primary<br>ICD-10<br>Code</th>
+                        <th style="width: 18%;">Description</th>
+                        <th style="width: 10%;">Start<br>Date</th>
+                        <th style="width: 10%;">Stop<br>Date</th>
+                        <th style="width: 12%;">Procedure/<br>Service<br>Codes</th>
+                        <th style="width: 12%;">Diagnosis<br>Code</th>
+                        <th style="width: 16%;">Requested<br>Service</th>
+                        <th style="width: 10%;">Units/<br>Visits</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td><input type="text" name="icd10_1" value="<%= data.icd10_1 || '' %>"></td>
+                        <td><input type="text" name="description_1" value="<%= data.description_1 || '' %>"></td>
+                        <td><input type="date" name="start_date_1" value="<%= data.start_date_1 || '' %>"></td>
+                        <td><input type="date" name="stop_date_1" value="<%= data.stop_date_1 || '' %>"></td>
+                        <td><input type="text" name="procedure_code_1" value="<%= data.procedure_code_1 || '' %>"></td>
+                        <td><input type="text" name="diagnosis_code_1" value="<%= data.diagnosis_code_1 || '' %>"></td>
+                        <td><input type="text" name="requested_service_1" value="<%= data.requested_service_1 || '' %>"></td>
+                        <td><input type="text" name="units_1" value="<%= data.units_1 || '' %>"></td>
+                    </tr>
+                    <% if (data.icd10_2 || data.description_2 || data.start_date_2 || data.procedure_code_2) { %>
+                    <tr>
+                        <td><input type="text" name="icd10_2" value="<%= data.icd10_2 || '' %>"></td>
+                        <td><input type="text" name="description_2" value="<%= data.description_2 || '' %>"></td>
+                        <td><input type="date" name="start_date_2" value="<%= data.start_date_2 || '' %>"></td>
+                        <td><input type="date" name="stop_date_2" value="<%= data.stop_date_2 || '' %>"></td>
+                        <td><input type="text" name="procedure_code_2" value="<%= data.procedure_code_2 || '' %>"></td>
+                        <td><input type="text" name="diagnosis_code_2" value="<%= data.diagnosis_code_2 || '' %>"></td>
+                        <td><input type="text" name="requested_service_2" value="<%= data.requested_service_2 || '' %>"></td>
+                        <td><input type="text" name="units_2" value="<%= data.units_2 || '' %>"></td>
+                    </tr>
+                    <% } %>
+                    <% if (data.icd10_3 || data.description_3 || data.start_date_3 || data.procedure_code_3) { %>
+                    <tr>
+                        <td><input type="text" name="icd10_3" value="<%= data.icd10_3 || '' %>"></td>
+                        <td><input type="text" name="description_3" value="<%= data.description_3 || '' %>"></td>
+                        <td><input type="date" name="start_date_3" value="<%= data.start_date_3 || '' %>"></td>
+                        <td><input type="date" name="stop_date_3" value="<%= data.stop_date_3 || '' %>"></td>
+                        <td><input type="text" name="procedure_code_3" value="<%= data.procedure_code_3 || '' %>"></td>
+                        <td><input type="text" name="diagnosis_code_3" value="<%= data.diagnosis_code_3 || '' %>"></td>
+                        <td><input type="text" name="requested_service_3" value="<%= data.requested_service_3 || '' %>"></td>
+                        <td><input type="text" name="units_3" value="<%= data.units_3 || '' %>"></td>
+                    </tr>
+                    <% } %>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Additional Information -->
+        <div class="section">
+            <div class="form-group-block">
+                <label><strong>Additional Information:</strong></label>
+                <textarea name="additional_info" rows="3" style="width: 100%; border: 1px solid #ccc; padding: 4px;"><%= data.additional_info || '' %></textarea>
+            </div>
+            <div class="form-row-equal">
+                <div class="form-group">
+                    <label>This form completed by</label>
+                    <input type="text" name="completed_by" class="long" value="Tyler Horn, LCSW">
+                </div>
+                <div class="form-group">
+                    <label>Phone #</label>
+                    <input type="tel" name="completed_by_phone" class="medium" value="502-768-1118">
+                </div>
+            </div>
+        </div>
+
+        <!-- Print Button -->
+        <div style="text-align: center; margin-top: 20px;">
+            <button type="button" style="display:none;" style="background-color: #007bff; color: white; border: none; padding: 10px 20px; font-size: 12px; border-radius: 4px; cursor: pointer;">Print Form</button>
+        </div>
+    </div>
+
+    <script>
+        // Auto-format phone numbers
+        function formatPhone(input) {
+            let value = input.value.replace(/\D/g, '');
+            if (value.length >= 6) {
+                value = value.substring(0,3) + '-' + value.substring(3,6) + '-' + value.substring(6,10);
+            } else if (value.length >= 3) {
+                value = value.substring(0,3) + '-' + value.substring(3);
+            }
+            input.value = value;
+        }
+
+        // Add phone formatting to all tel inputs
+        document.querySelectorAll('input[type="tel"]').forEach(input => {
+            input.addEventListener('input', function() {
+                formatPhone(this);
+            });
+        });
+
+        // Prevent multiple MCO selections
+        document.querySelectorAll('input[name="mco"]').forEach(checkbox => {
+            checkbox.addEventListener('change', function() {
+                if (this.checked) {
+                    document.querySelectorAll('input[name="mco"]').forEach(other => {
+                        if (other !== this) other.checked = false;
+                    });
+                }
+            });
+        });
+    </script>
+</body>
+</html>

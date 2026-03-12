@@ -1,0 +1,810 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Auth Forms Generator</title>
+    <!-- Modern Font: Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <!-- Icon Font: Phosphor Icons -->
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <link rel="stylesheet" href="css/style.css">
+</head>
+
+<body>
+    <div id="sync-indicator">
+        <i class="ph ph-arrows-clockwise ph-spin"></i> Checking fax statuses...
+    </div>
+
+    <div class="app-container">
+        <!-- Sidebar Navigation -->
+        <nav class="sidebar glass-panel">
+            <div class="sidebar-header">
+                <div class="logo-circle">
+                    <i class="ph-fill ph-file-pdf"></i>
+                </div>
+                <h2>Louisville Mental Health Group</h2>
+            </div>
+
+            <ul class="nav-links">
+                <li><a href="#" class="nav-link active" data-view="dashboard"><i class="ph ph-users"></i>
+                        Clients</a></li>
+                <li><a href="#" class="nav-link" data-view="fax-log"><i class="ph ph-receipt"></i> Fax Log</a></li>
+                <li><a href="#" class="nav-link" data-view="facilities"><i class="ph ph-address-book"></i> Directories</a>
+                </li>
+                <li><a href="#" class="nav-link" data-view="calendar"><i class="ph ph-calendar"></i> Calendar</a></li>
+                <li><a href="#" class="nav-link" data-view="settings"><i class="ph ph-gear"></i> Settings</a></li>
+            </ul>
+
+            <div class="sidebar-footer">
+                <p>Auth Forms v1.0</p>
+            </div>
+        </nav>
+
+        <!-- Main Content Area -->
+        <main class="main-content">
+            <!-- Header -->
+            <header class="top-header">
+                <h1 id="page-title">Dashboard</h1>
+                <div class="header-actions">
+                    <button class="btn btn-primary" id="btn-add-client">
+                        <i class="ph ph-plus"></i> New Client
+                    </button>
+                    <!-- Some other actions depending on view... -->
+                </div>
+            </header>
+
+            <!-- Views Container -->
+            <div class="view-container">
+
+                <!-- VIEW: Dashboard (Clients List) -->
+                <section id="view-dashboard" class="view active">
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-users"></i> Your Clients</h3>
+                            <div class="search-box">
+                                <i class="ph ph-magnifying-glass"></i>
+                                <input type="text" id="client-search" placeholder="Search clients...">
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="modern-table" id="clients-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="cursor:pointer;" onclick="sortClients('name')">Name <i class="ph ph-caret-up-down"></i></th>
+                                            <th style="cursor:pointer;" onclick="sortClients('medicaid_id')">Medicaid ID <i class="ph ph-caret-up-down"></i></th>
+                                            <th style="cursor:pointer;" onclick="sortClients('mco_id')">MCO <i class="ph ph-caret-up-down"></i></th>
+                                            <th style="cursor:pointer;" onclick="sortClients('dob')">DOB <i class="ph ph-caret-up-down"></i></th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Populated via JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: Fax Log -->
+                <section id="view-fax-log" class="view">
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-receipt"></i> Global Fax Log</h3>
+                            <p class="text-sm">History of all fax attempts across all clients.</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="modern-table" id="fax-log-table">
+                                    <thead>
+                                        <tr>
+                                            <th style="cursor: pointer;" onclick="sortFaxLog('client_name')">Client <i class="ph ph-caret-up-down"></i></th>
+                                            <th style="cursor: pointer;" onclick="sortFaxLog('fax_sent_date')">Date & Time <i class="ph ph-caret-up-down"></i></th>
+                                            <th style="cursor: pointer;" onclick="sortFaxLog('fax_to_number')">Recipient <i class="ph ph-caret-up-down"></i></th>
+                                            <th style="cursor: pointer;" onclick="sortFaxLog('fax_status')">Status <i class="ph ph-caret-up-down"></i></th>
+                                            <th>Details</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="fax-log-body">
+                                        <!-- Populated via JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+                
+                <!-- VIEW: Calendar -->
+                <section id="view-calendar" class="view">
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <div style="display: flex; align-items: center; gap: 15px;">
+                                <h3><i class="ph ph-calendar"></i> Authorization Calendar</h3>
+                                <div id="calendar-controls" style="display: flex; gap: 10px; align-items: center;">
+                                    <button class="btn btn-ghost btn-sm" onclick="prevMonth()"><i class="ph ph-caret-left"></i></button>
+                                    <h4 id="calendar-month-year" style="width: 150px; text-align: center; margin: 0;"></h4>
+                                    <button class="btn btn-ghost btn-sm" onclick="nextMonth()"><i class="ph ph-caret-right"></i></button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="card-body" style="display: flex; flex-direction: column; gap: 20px;">
+                            <div id="calendar-grid-container" style="width: 100%; max-width: 900px; margin: 0 auto;">
+                                <div id="calendar-days-header" style="display: grid; grid-template-columns: repeat(7, 1fr); text-align: center; font-weight: 600; font-size: 0.8rem; color: var(--text-muted); margin-bottom: 10px;">
+                                    <div>Sun</div><div>Mon</div><div>Tue</div><div>Wed</div><div>Thu</div><div>Fri</div><div>Sat</div>
+                                </div>
+                                <div id="calendar-grid" style="display: grid; grid-template-columns: repeat(7, 1fr); gap: 1px; background: var(--border-glass); border: 1px solid var(--border-glass); border-radius: var(--radius-sm); overflow: hidden;">
+                                    <!-- Days populated via JS -->
+                                </div>
+                            </div>
+                            
+                            <div id="calendar-details-panel" class="card glass-card" style="padding: 16px; min-height: 100px;">
+                                <h4 id="selected-date-label" style="margin-bottom: 12px; border-bottom: 1px solid var(--border-glass); padding-bottom: 8px;">Select a date to view events</h4>
+                                <ul id="calendar-events-list" style="list-style: none;">
+                                    <!-- Events list populated via JS -->
+                                </ul>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: Client Form (Create/Edit) -->
+                <section id="view-client-form" class="view">
+                    <button class="btn btn-ghost mb-4 nav-back" data-target="dashboard"><i class="ph ph-arrow-left"></i>
+                        Back to Dashboard</button>
+                    <div class="card glass-card">
+                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <h3 id="client-form-title">Client Details</h3>
+                            <button type="button" class="btn btn-secondary" id="btn-sync-intakeq">
+                                <i class="ph ph-plugs-connected"></i> Sync from IntakeQ
+                            </button>
+                        </div>
+                        <!-- IntakeQ Auto-Sync Results Panel -->
+                        <div id="intakeq-sync-panel" style="display:none; padding: 16px 20px; background: rgba(99,102,241,0.07); border-bottom: 1px solid rgba(99,102,241,0.2);">
+                            <p style="font-weight:600; margin-bottom:8px;"><i class="ph ph-list-magnifying-glass"></i> Select a matching IntakeQ client to import their data:</p>
+                            <ul id="intakeq-sync-results" style="list-style:none; padding:0; margin:0;"></ul>
+                            <div id="intakeq-sync-loading" style="display:none; font-size:0.9rem; color:#666;"><i class="ph ph-spinner ph-spin"></i> Searching IntakeQ...</div>
+                            <div id="intakeq-sync-error" style="display:none; color:var(--danger); font-size:0.9rem;"></div>
+                        </div>
+                        <div class="card-body">
+                            <form id="client-form" class="modern-form">
+                                <input type="hidden" id="client_id">
+
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label>Full Name</label>
+                                        <input type="text" id="c_name" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Date of Birth</label>
+                                        <input type="date" id="c_dob">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Medicaid ID #</label>
+                                        <input type="text" id="c_medicaid_id">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>MCO ID #</label>
+                                        <input type="text" id="c_mco_id">
+                                    </div>
+                                </div>
+
+                                <h4 class="section-divider">Medical Details</h4>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label>Primary Care Provider (PCP)</label>
+                                        <input type="text" id="c_pcp">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>PCP Phone</label>
+                                        <input type="tel" id="c_pcp_phone">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>PCP NPI</label>
+                                        <input type="text" id="c_pcp_npi">
+                                    </div>
+                                    <div class="form-group switch-group">
+                                        <label>Pregnant?</label>
+                                        <select id="c_pregnant" class="modern-select">
+                                            <option value="">Select...</option>
+                                            <option value="yes">Yes</option>
+                                            <option value="no">No</option>
+                                        </select>
+                                    </div>
+                                </div>
+
+                                <h4 class="section-divider">Insurance & Injuries</h4>
+                                <div class="form-grid">
+                                    <div class="form-group switch-group">
+                                        <label>Work-related injury?</label>
+                                        <select id="c_work_injury" class="modern-select">
+                                            <option value="">Select...</option>
+                                            <option value="yes">Yes</option>
+                                            <option value="no">No</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group switch-group">
+                                        <label>Motor Vehicle Accident?</label>
+                                        <select id="c_mva" class="modern-select">
+                                            <option value="">Select...</option>
+                                            <option value="yes">Yes</option>
+                                            <option value="no">No</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group switch-group">
+                                        <label>Other Insurance?</label>
+                                        <select id="c_other_insurance" class="modern-select">
+                                            <option value="">Select...</option>
+                                            <option value="yes">Yes</option>
+                                            <option value="no">No</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Insurer Name</label>
+                                        <input type="text" id="c_insurer">
+                                    </div>
+                                    <div class="form-group checkboxes-inline col-span-2">
+                                        <label>Medicare</label>
+                                        <label class="custom-checkbox">
+                                            <input type="checkbox" id="c_medicare_a"> <span class="checkmark"></span>
+                                            Part A
+                                        </label>
+                                        <label class="custom-checkbox">
+                                            <input type="checkbox" id="c_medicare_b"> <span class="checkmark"></span>
+                                            Part B
+                                        </label>
+                                    </div>
+                                </div>
+
+                                <div class="form-actions mt-4" style="display:flex; gap:12px;">
+                                    <button type="submit" class="btn btn-primary"><i class="ph ph-floppy-disk"></i> Save Client</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: Client Details & Auth Requests -->
+                <section id="view-client-details" class="view">
+                    <button class="btn btn-ghost mb-4 nav-back" data-target="dashboard"><i class="ph ph-arrow-left"></i>
+                        Back to Dashboard</button>
+
+                    <div class="client-header-card glass-card mb-4">
+                        <div class="client-info-summary">
+                            <h2 id="cd_name">Client Name</h2>
+                            <p class="subtitle"><i class="ph ph-identification-card"></i> Medicaid: <span
+                                    id="cd_medicaid">--</span> | <i class="ph ph-cake"></i> DOB: <span
+                                    id="cd_dob">--</span>
+                                <span id="cd_intakeq_badge" style="display:none; margin-left:10px;">
+                                    <span style="background:rgba(99,102,241,0.15); color:#6366f1; border:1px solid rgba(99,102,241,0.3); padding:2px 9px; border-radius:12px; font-size:0.78rem; font-weight:600;">
+                                        <i class="ph ph-plugs-connected"></i> IQ#<span id="cd_intakeq_num"></span>
+                                    </span>
+                                </span>
+                            </p>
+                        </div>
+                        <div class="client-actions">
+                            <button class="btn btn-secondary" id="btn-edit-client"><i class="ph ph-pencil-simple"></i>
+                                Edit Details</button>
+                            <button class="btn btn-primary" id="btn-new-auth"><i class="ph ph-file-plus"></i> New Auth
+                                Request</button>
+                        </div>
+                    </div>
+
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-files"></i> Authorization History</h3>
+                        </div>
+                        <div class="card-body">
+                            <ul class="auth-history-list" id="auth-history-list">
+                                <!-- Populated via JS -->
+                            </ul>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: Settings / Provider Info -->
+                <section id="view-settings" class="view">
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-buildings"></i> Provider & Facility Settings</h3>
+                            <p class="text-sm text-gray">This information will be auto-filled on all Authorization
+                                Requests.</p>
+                        </div>
+                        <div class="card-body">
+                            <form id="settings-form" class="modern-form">
+
+                                <div class="grid-2-col">
+                                    <!-- Requesting Provider -->
+                                    <div class="settings-group">
+                                        <h4 class="section-divider">Requesting Provider</h4>
+                                        <div class="form-grid-1">
+                                            <div class="form-group"><label>Provider Name</label><input type="text"
+                                                    id="s_req_provider"></div>
+                                            <div class="form-group"><label>NPI #</label><input type="text"
+                                                    id="s_req_npi"></div>
+                                            <div class="form-group"><label>Phone</label><input type="tel"
+                                                    id="s_req_phone"></div>
+                                            <div class="form-group"><label>Fax #</label><input type="tel"
+                                                    id="s_req_fax"></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- Form Completed By -->
+                                    <div class="settings-group col-span-2 mt-4">
+                                        <h4 class="section-divider">Form Completed By</h4>
+                                        <div class="form-grid-2">
+                                            <div class="form-group"><label>Name</label><input type="text"
+                                                    id="s_comp_by"></div>
+                                            <div class="form-group"><label>Phone #</label><input type="tel"
+                                                    id="s_comp_phone"></div>
+                                        </div>
+                                    </div>
+
+                                    <!-- IntakeQ Configuration -->
+                                    <div class="settings-group col-span-2 mt-4">
+                                        <h4 class="section-divider"><i class="ph ph-plugs-connected"></i> IntakeQ Configuration</h4>
+                                        <div class="form-grid-1">
+                                            <div class="form-group">
+                                                <label>IntakeQ API Key</label>
+                                                <input type="password" id="s_intakeq_key" placeholder="Enter your IntakeQ Developer API Key" class="modern-input">
+                                                <p class="text-sm text-gray mt-1">Found in IntakeQ: More &gt; Settings &gt; Integrations &gt; Developer API</p>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <!-- SRFax Configuration -->
+                                    <div class="settings-group col-span-2 mt-4">
+                                        <h4 class="section-divider"><i class="ph ph-fax"></i> SRFax Configuration</h4>
+                                        <div class="form-grid">
+                                            <div class="form-group"><label>Account ID</label><input type="text" id="s_srfax_id" placeholder="Account #"></div>
+                                            <div class="form-group"><label>Password</label><input type="password" id="s_srfax_pwd" placeholder="Password"></div>
+                                            <div class="form-group"><label>Caller ID (10 digits - no country code)</label><input type="tel" id="s_srfax_caller" placeholder="5021234567"></div>
+                                            <div class="form-group"><label>Sender Email</label><input type="email" id="s_srfax_email" placeholder="you@example.com"></div>
+                                        </div>
+                                        <div class="mt-4 flex-center">
+                                            <button type="button" class="btn btn-secondary" id="btn-test-fax"><i class="ph ph-paper-plane-tilt"></i> Send Test Fax to Caller ID</button>
+                                        </div>
+                                    </div>
+
+                                    <!-- MCO Fax Directory -->
+                                    <div class="settings-group col-span-2 mt-4">
+                                        <h4 class="section-divider"><i class="ph ph-address-book"></i> MCO Fax Directory</h4>
+                                        <p class="text-sm text-gray mb-2">Auto-fills the fax number when sending auths to a specific MCO.</p>
+                                        <div class="table-responsive mb-2">
+                                            <table class="modern-table" id="mco-fax-table">
+                                                <thead>
+                                                    <tr>
+                                                        <th>MCO Name</th>
+                                                        <th>Fax Number</th>
+                                                        <th>Actions</th>
+                                                    </tr>
+                                                </thead>
+                                                <tbody>
+                                                    <!-- Populated via JS -->
+                                                </tbody>
+                                            </table>
+                                        </div>
+                                        <div class="form-grid" style="align-items:end;">
+                                            <div class="form-group"><label>MCO Name</label><input type="text" id="mco_new_name" placeholder="e.g. Aetna Better Health"></div>
+                                            <div class="form-group"><label>Fax Number (11 digits)</label><input type="tel" id="mco_new_fax" placeholder="15021234567"></div>
+                                            <div class="form-group"><button type="button" class="btn btn-secondary" id="btn-add-mco"><i class="ph ph-plus"></i> Add</button></div>
+                                        </div>
+                                    </div>
+
+                                </div>
+
+                                <div class="form-actions mt-4 text-center">
+                                    <button type="submit" class="btn btn-primary"><i class="ph ph-floppy-disk"></i> Save
+                                        Settings</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: Facilities List -->
+                <section id="view-facilities" class="view">
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-hospital"></i> Manage Facilities</h3>
+                            <div class="header-actions">
+                                <button class="btn btn-primary" id="btn-add-facility">
+                                    <i class="ph ph-plus"></i> New Preset
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="modern-table" id="facilities-table">
+                                    <thead>
+                                        <tr>
+                                            <th>Preset Name</th>
+                                            <th>Requesting Provider</th>
+                                            <th>Servicing Provider</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Populated via JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: Facility Form -->
+                <section id="view-facility-form" class="view">
+                    <button class="btn btn-ghost mb-4 nav-back" data-target="facilities"><i
+                            class="ph ph-arrow-left"></i> Back to Presets</button>
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <h3 id="facility-form-title">Provider Preset Details</h3>
+                        </div>
+                        <div class="card-body">
+                            <form id="facility-form" class="modern-form">
+                                <input type="hidden" id="fac_id">
+                                <div class="form-group mb-4">
+                                    <label>Preset Name (e.g. "Main Clinic Team")</label>
+                                    <input type="text" id="fac_name" required>
+                                </div>
+
+                                <div class="grid-2-col">
+                                    <div class="settings-group">
+                                        <h4 class="section-divider">1. Requesting Provider</h4>
+                                        <div class="form-grid-1">
+                                            <div class="form-group"><label>Provider Name</label><input type="text"
+                                                    id="fac_req_provider"></div>
+                                            <div class="form-group"><label>NPI</label><input type="text" id="fac_req_npi"></div>
+                                            <div class="form-group grid-2-col-inner">
+                                                <div><label>Phone</label><input type="tel" id="fac_req_phone"></div>
+                                                <div><label>Fax #</label><input type="tel" id="fac_req_fax"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="settings-group">
+                                        <h4 class="section-divider">2. Servicing Provider</h4>
+                                        <div class="form-grid-1">
+                                            <div class="form-group"><label>Provider Name</label><input type="text"
+                                                    id="fac_serv_provider"></div>
+                                            <div class="form-group grid-2-col-inner">
+                                                <div><label>NPI</label><input type="text" id="fac_serv_npi"></div>
+                                                <div><label>Tax ID #</label><input type="text" id="fac_serv_tax"></div>
+                                            </div>
+                                            <div class="form-group"><label>Address</label><input type="text"
+                                                    id="fac_serv_addr"></div>
+                                            <div class="form-group grid-3-col-inner">
+                                                <div><label>City</label><input type="text" id="fac_serv_city"></div>
+                                                <div><label>State</label><input type="text" id="fac_serv_state"></div>
+                                                <div><label>ZIP</label><input type="text" id="fac_serv_zip"></div>
+                                            </div>
+                                            <div class="form-group grid-2-col-inner">
+                                                <div><label>Phone</label><input type="tel" id="fac_serv_phone"></div>
+                                                <div><label>Fax #</label><input type="tel" id="fac_serv_fax"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div class="form-actions mt-4 text-center">
+                                    <button type="submit" class="btn btn-primary"><i class="ph ph-floppy-disk"></i> Save
+                                        Facility Profile</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </section>
+
+
+                <!-- VIEW: Generate Auth Form -->
+                <section id="view-generate-auth" class="view">
+                    <button class="btn btn-ghost mb-4 nav-back" data-target="client-details"><i
+                            class="ph ph-arrow-left"></i> Back to Client</button>
+
+                    <div class="tabs-container">
+                        <div class="tab-headers">
+                            <div class="tab-header active" data-tab="tab-form"><i class="ph ph-file-text"></i> Form Data</div>
+                            <div class="tab-header" data-tab="tab-attachments"><i class="ph ph-paperclip"></i> Attachments</div>
+                            <div class="tab-header" data-tab="tab-actions"><i class="ph ph-lightning"></i> Actions & History</div>
+                        </div>
+
+                        <!-- Left Panel: Form Inputs -->
+                        <div class="card glass-card form-panel tab-pane active" id="tab-form">
+                            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                                <div>
+                                    <h3><i class="ph ph-file-text"></i> <span id="gen_record_number"></span></h3>
+                                    <p class="text-sm">Client: <span id="gen_client_name" class="font-bold">--</span></p>
+                                </div>
+                                <span id="draft-status" style="font-size:0.8rem; color:#6366f1; font-weight:500;"></span>
+                            </div>
+                            <div class="card-body">
+                                <form id="auth-generate-form" class="modern-form">
+
+                                    <!-- Request Core -->
+                                    <h4 class="section-divider">Request Details</h4>
+                                    <div class="form-grid">
+                                        <div class="form-group">
+                                            <label>Date</label>
+                                            <input type="date" name="date" required value="">
+                                        </div>
+                                        <div class="form-group">
+                                            <label>MCO Enrolled</label>
+                                            <select name="mco" class="modern-select">
+                                                <option value="">Select...</option>
+                                                <option value="aetna">Aetna Better Health</option>
+                                                <option value="united">UnitedHealthcare</option>
+                                                <option value="humana">Humana Healthy Horizons</option>
+                                                <option value="passport">Passport Health Plan</option>
+                                                <option value="wellcare">WellCare of KY</option>
+                                                <option value="anthem">Anthem BCBS</option>
+                                            </select>
+                                        </div>
+                                    </div> <!-- End of form-grid -->
+
+                                    <div class="card glass-card form-section-card mb-4">
+                                        <div class="card-header">
+                                            <h3><i class="ph ph-address-book"></i> Presets & Providers</h3>
+                                        </div>
+                                        <div class="card-body">
+                                            <div class="form-group mb-4">
+                                                <label>Select Provider Preset</label>
+                                                <select id="auth_facility_select" name="facility_id" class="modern-select">
+                                                <option value="">-- Manual Entry / Default Settings --</option>
+                                                <!-- Populated via JS -->
+                                            </select>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Type of Request</label>
+                                            <div class="radio-group">
+                                                <label class="custom-radio"><input type="radio" name="request_type"
+                                                        value="urgent"> <span class="radio-mark"></span> Urgent</label>
+                                                <label class="custom-radio"><input type="radio" name="request_type"
+                                                        value="non_urgent" checked> <span class="radio-mark"></span>
+                                                    Non-Urgent</label>
+                                            </div>
+                                        </div>
+                                        <div class="form-group">
+                                            <label>Service Timing</label>
+                                            <select name="service_timing" class="modern-select">
+                                                <option value="">Select...</option>
+                                                <option value="pre_service">Pre-Service</option>
+                                                <option value="post_service">Post-Service</option>
+                                                <option value="emergent">Emergent</option>
+                                            </select>
+                                        </div>
+                                    </div>
+                                </div> <!-- End of Presets Card -->
+
+                                <!-- Service Type -->
+                                <h4 class="section-divider">Type of Service</h4>
+                                <div class="services-grid">
+                                    <label class="custom-checkbox"><input type="checkbox" name="service_type"
+                                            value="behavioral_health"> <span class="checkmark"></span> Behavioral
+                                        Health</label>
+                                    <label class="custom-checkbox"><input type="checkbox" name="service_type"
+                                            value="epsd"> <span class="checkmark"></span> EPSD</label>
+                                    <label class="custom-checkbox"><input type="checkbox" name="service_type"
+                                            value="medical_outpatient"> <span class="checkmark"></span> Med -
+                                        Outpatient</label>
+                                    <label class="custom-checkbox"><input type="checkbox" name="service_type"
+                                            value="home_health"> <span class="checkmark"></span> Home Health</label>
+                                    <label class="custom-checkbox"><input type="checkbox" name="service_type"
+                                            value="other"> <span class="checkmark"></span> Other</label>
+                                </div>
+
+                                <!-- Additional Request Fields -->
+                                <h4 class="section-divider">Additional Details</h4>
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label>Time Faxed</label>
+                                        <input type="text" name="time_faxed" placeholder="Ex: 10:30 AM">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Supporting Docs?</label>
+                                        <div class="radio-group">
+                                            <label class="custom-radio"><input type="radio" name="supporting_docs" value="yes"> <span class="radio-mark"></span> Yes</label>
+                                            <label class="custom-radio"><input type="radio" name="supporting_docs" value="no" checked> <span class="radio-mark"></span> No</label>
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Number of Docs</label>
+                                        <input type="text" name="num_docs" placeholder="Ex: 3">
+                                    </div>
+                                </div>
+
+                                    <!-- Clinical Info -->
+                                    <h4 class="section-divider">Clinical Information</h4>
+                                    <div class="clinical-rows" id="clinical-rows">
+                                        <div class="clinical-row">
+                                            <div class="grid-col-2">
+                                                <div class="form-group"><label>ICD-10</label><input type="text"
+                                                        name="icd10_1" placeholder="Ex: F41.1"></div>
+                                                <div class="form-group"><label>Desc</label><input type="text"
+                                                        name="description_1" placeholder="Anxiety"></div>
+                                                <div class="form-group"><label>Start Date</label><input type="date"
+                                                        name="start_date_1"></div>
+                                                <div class="form-group"><label>Stop Date</label><input type="date"
+                                                        name="stop_date_1"></div>
+                                                <div class="form-group"><label>Proc. Code</label><input type="text"
+                                                        name="procedure_code_1" placeholder="90837"></div>
+                                                <div class="form-group"><label>Diag. Code</label><input type="text"
+                                                        name="diagnosis_code_1"></div>
+                                                <div class="form-group"><label>Service</label><input type="text"
+                                                        name="requested_service_1" placeholder="Psychotherapy"></div>
+                                                <div class="form-group"><label>Units</label><input type="text"
+                                                        name="units_1" placeholder="4"></div>
+                                            </div>
+                                        </div>
+                                        <div class="clinical-row">
+                                            <div class="grid-col-2">
+                                                <div class="form-group"><label>ICD-10</label><input type="text" name="icd10_2"></div>
+                                                <div class="form-group"><label>Desc</label><input type="text" name="description_2"></div>
+                                                <div class="form-group"><label>Start Date</label><input type="date" name="start_date_2"></div>
+                                                <div class="form-group"><label>Stop Date</label><input type="date" name="stop_date_2"></div>
+                                                <div class="form-group"><label>Proc. Code</label><input type="text" name="procedure_code_2"></div>
+                                                <div class="form-group"><label>Diag. Code</label><input type="text" name="diagnosis_code_2"></div>
+                                                <div class="form-group"><label>Service</label><input type="text" name="requested_service_2"></div>
+                                                <div class="form-group"><label>Units</label><input type="text" name="units_2"></div>
+                                            </div>
+                                        </div>
+                                        <div class="clinical-row">
+                                            <div class="grid-col-2">
+                                                <div class="form-group"><label>ICD-10</label><input type="text" name="icd10_3"></div>
+                                                <div class="form-group"><label>Desc</label><input type="text" name="description_3"></div>
+                                                <div class="form-group"><label>Start Date</label><input type="date" name="start_date_3"></div>
+                                                <div class="form-group"><label>Stop Date</label><input type="date" name="stop_date_3"></div>
+                                                <div class="form-group"><label>Proc. Code</label><input type="text" name="procedure_code_3"></div>
+                                                <div class="form-group"><label>Diag. Code</label><input type="text" name="diagnosis_code_3"></div>
+                                                <div class="form-group"><label>Service</label><input type="text" name="requested_service_3"></div>
+                                                <div class="form-group"><label>Units</label><input type="text" name="units_3"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="form-group mt-4">
+                                        <label>Additional Information</label>
+                                        <textarea name="additional_info" rows="3" class="modern-textarea"
+                                            placeholder="Any extra notes..."></textarea>
+                                    </div>
+
+                                    <div class="form-actions mt-6" style="text-align: right;">
+                                        <button type="button" class="btn btn-primary" id="btn-save-draft">
+                                            <i class="ph ph-floppy-disk"></i> Save Record
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+
+                        <!-- Tab 2: Attachments -->
+                        <div class="card glass-card attachment-panel tab-pane" id="tab-attachments">
+                            <div class="card-header">
+                                <h3><i class="ph ph-paperclip"></i> PDF Attachments</h3>
+                                <p class="text-sm">These will be appended to the final PDF.</p>
+                            </div>
+                            <div class="card-body" style="display:grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                                <!-- IntakeQ Column -->
+                                <div class="intakeq-notes-section">
+                                    <h4 class="section-divider" style="margin-top:0;"><i class="ph ph-stethoscope"></i> IntakeQ Notes</h4>
+                                    <p class="text-sm text-gray mb-2">Import recent locked treatment notes directly from IntakeQ.</p>
+                                    <button type="button" class="btn btn-secondary btn-sm mb-3" id="btn-load-intakeq-notes">
+                                        <i class="ph ph-arrows-clockwise"></i> Load Client's Notes
+                                    </button>
+                                    <div id="intakeq-notes-loading" style="display:none; font-size:0.9rem; color:#666;"><i class="ph ph-spinner ph-spin"></i> Loading...</div>
+                                    <ul class="file-list" id="intakeq-notes-list" style="margin-top:0;">
+                                        <!-- Populated via JS -->
+                                    </ul>
+                                </div>
+
+                                <h4 class="section-divider"><i class="ph ph-hard-drives"></i> Local Device Files</h4>
+                                <div class="file-drop-area" id="file-drop-area">
+                                    <i class="ph ph-upload-simple upload-icon"></i>
+                                    <span class="file-msg">Drag & Drop PDFs here or click to browse</span>
+                                    <input type="file" id="pdf-upload" class="file-input" multiple
+                                        accept="application/pdf">
+                                </div>
+
+                                <ul class="file-list" id="file-list">
+                                        <!-- Populated via JS -->
+                                    </ul>
+                            </div>
+                        </div>
+                        
+                        <!-- Tab 3: Actions & History -->
+                        <div class="card glass-card actions-panel tab-pane" id="tab-actions">
+                            <div class="card-header">
+                                <h3><i class="ph ph-lightning"></i> Actions</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="flex-center mt-2 mb-6" style="gap: 16px;">
+                                    <button class="btn btn-primary btn-large generate-btn" id="btn-generate-pdf">
+                                        <i class="ph ph-magic-wand"></i> Generate PDF
+                                    </button>
+                                    <button class="btn btn-secondary btn-large" id="btn-send-fax">
+                                        <i class="ph ph-paper-plane-tilt"></i> Send via SRFax
+                                    </button>
+                                </div>
+
+                                <!-- Inline SRFax Layer Modal -->
+                                <div id="inline-fax-layer" class="card glass-card mb-6" style="display:none; border: 2px solid var(--primary); background: rgba(99, 102, 241, 0.05);">
+                                    <div class="card-header" style="background: transparent; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+                                        <h3 style="color: var(--primary);"><i class="ph ph-paper-plane-tilt"></i> Send Authorization via SRFax</h3>
+                                        <button class="btn btn-ghost btn-sm" id="btn-close-fax-layer"><i class="ph ph-x"></i></button>
+                                    </div>
+                                    <div class="card-body">
+                                        <div class="form-grid-1 mb-4">
+                                            <div class="form-group">
+                                                <label>1. Select Provider/MCO from Directory</label>
+                                                <select id="fax_directory_select" class="modern-select">
+                                                    <option value="">-- Choose from Directory --</option>
+                                                    <!-- Populated via JS -->
+                                                </select>
+                                                <small class="text-gray">Or enter a custom number below.</small>
+                                            </div>
+                                            <div class="form-group">
+                                                <label>2. Recipient Fax Number (11 digits)</label>
+                                                <input type="tel" id="fax_to_number" placeholder="15021234567" class="modern-input" style="font-size:1.1rem; padding:10px;">
+                                            </div>
+                                        </div>
+                                        <div id="fax-layer-error" style="color:var(--danger); margin-bottom:12px; display:none;"></div>
+                                        <div style="text-align: right; margin-top: 20px;">
+                                            <button class="btn btn-primary" id="fax-layer-send"><i class="ph ph-paper-plane-tilt"></i> Dispatch Fax</button>
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <h4 class="section-divider">Past Authorizations</h4>
+                                <div class="table-responsive">
+                                    <table class="modern-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Record Numer</th>
+                                                <th>Date Submitted</th>
+                                                <th>Status</th>
+                                                <th>Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody id="auth-history-tab-body">
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                        
+                    </div>
+                </section>
+
+            </div>
+        </main>
+    </div>
+
+
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="spinner"></div>
+        <p>Generating PDF... Please wait.</p>
+    </div>
+
+    <!-- PDF Preview Modal -->
+    <div id="preview-modal" class="loading-overlay" style="background: rgba(0,0,0,0.8);">
+        <div style="width: 90%; height: 90%; background: white; border-radius: 8px; position: relative; display: flex; flex-direction: column;">
+            <div style="padding: 10px 20px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #ddd;">
+                <h3 style="margin:0;"><i class="ph ph-file-pdf"></i> Authorization Preview</h3>
+                <button class="btn btn-ghost" onclick="closePreview()"><i class="ph ph-x"></i> Close</button>
+            </div>
+            <div style="flex:1;">
+                <iframe id="preview-iframe" style="width:100%; height:100%; border:none;"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <script src="js/app.js"></script>
+</body>
+
+</html>
