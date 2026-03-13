@@ -5,23 +5,253 @@
     --primary-hover: #3182ce;
     --primary-light: #e6f2ff;
     --secondary: #9de2c6; /* pastel mint */
-    
+
     --bg-main: #f8fafc; /* very soft, calming off-white */
     --bg-glass: #ffffff; /* pure white cards */
     --border-glass: #e2e8f0; /* soft gray borders */
-    
+
     --text-main: #334155; /* dark gray */
     --text-muted: #64748b;
-    
+
     --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.05);
     --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
     --shadow-glow: 0 0 0 4px rgba(71, 153, 235, 0.2);
-    
+
     --radius-sm: 8px;
     --radius-md: 16px;
     --radius-lg: 20px;
-    
+
     --transition: 0.2s ease;
+
+    /* Toggle switch */
+    --toggle-bg: #cbd5e1;
+    --toggle-active: var(--primary);
+}
+
+/* === DARK MODE === */
+[data-theme="dark"] {
+    --primary: #60a5fa;
+    --primary-hover: #3b82f6;
+    --primary-light: #1e3a5f;
+    --secondary: #34d399;
+
+    --bg-main: #0f172a;
+    --bg-glass: #1e293b;
+    --border-glass: #334155;
+
+    --text-main: #f1f5f9;
+    --text-muted: #94a3b8;
+
+    --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 6px -1px rgba(0, 0, 0, 0.4);
+    --shadow-glow: 0 0 0 4px rgba(96, 165, 250, 0.3);
+
+    --toggle-bg: #475569;
+    --toggle-active: var(--primary);
+}
+
+[data-theme="dark"] body {
+    background-color: var(--bg-main);
+}
+
+[data-theme="dark"] .sidebar {
+    background: var(--bg-glass);
+    border-right-color: var(--border-glass);
+}
+
+[data-theme="dark"] .nav-link:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .glass-card {
+    background: var(--bg-glass);
+    border-color: var(--border-glass);
+}
+
+[data-theme="dark"] .card-header {
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .btn-secondary {
+    background: var(--bg-glass);
+    border-color: var(--border-glass);
+    color: var(--text-main);
+}
+
+[data-theme="dark"] .btn-secondary:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .btn-ghost:hover {
+    background: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] input[type="text"],
+[data-theme="dark"] input[type="date"],
+[data-theme="dark"] input[type="tel"],
+[data-theme="dark"] input[type="password"],
+[data-theme="dark"] input[type="email"],
+[data-theme="dark"] select.modern-select,
+[data-theme="dark"] textarea.modern-textarea {
+    background: var(--bg-main);
+    border-color: var(--border-glass);
+    color: var(--text-main);
+}
+
+[data-theme="dark"] .modern-table th {
+    border-bottom-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme="dark"] .modern-table td {
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+[data-theme="dark"] .modern-table tr:hover {
+    background: rgba(255, 255, 255, 0.02);
+}
+
+[data-theme="dark"] .auth-history-list li {
+    border-color: var(--border-glass);
+}
+
+[data-theme="dark"] .auth-history-list li:hover {
+    background: var(--bg-glass);
+}
+
+[data-theme="dark"] .file-drop-area {
+    border-color: rgba(96, 165, 250, 0.5);
+    background: rgba(96, 165, 250, 0.1);
+}
+
+[data-theme="dark"] .file-drop-area:hover,
+[data-theme="dark"] .file-drop-area.dragover {
+    background: rgba(96, 165, 250, 0.2);
+}
+
+[data-theme="dark"] .file-list li {
+    background: var(--bg-main);
+    border-color: var(--border-glass);
+}
+
+[data-theme="dark"] .calendar-day {
+    background: var(--bg-glass);
+    border: 1px solid var(--border-glass);
+}
+
+[data-theme="dark"] .calendar-day:hover {
+    background: var(--primary-light);
+}
+
+[data-theme="dark"] .calendar-day.not-current-month {
+    background: rgba(0, 0, 0, 0.2);
+}
+
+[data-theme="dark"] .event-detail-item {
+    background: rgba(96, 165, 250, 0.1);
+}
+
+[data-theme="dark"] .loading-overlay {
+    background: rgba(15, 23, 42, 0.9);
+}
+
+[data-theme="dark"] .tab-header {
+    color: var(--text-muted);
+}
+
+[data-theme="dark"] .tab-header:hover {
+    color: var(--text-main);
+}
+
+[data-theme="dark"] .tab-headers {
+    border-bottom-color: var(--border-glass);
+}
+
+/* === TOGGLE SWITCH === */
+.toggle-switch {
+    position: relative;
+    display: inline-block;
+    width: 52px;
+    height: 28px;
+}
+
+.toggle-switch input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+}
+
+.toggle-slider {
+    position: absolute;
+    cursor: pointer;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: var(--toggle-bg);
+    transition: var(--transition);
+    border-radius: 28px;
+}
+
+.toggle-slider:before {
+    position: absolute;
+    content: "";
+    height: 22px;
+    width: 22px;
+    left: 3px;
+    bottom: 3px;
+    background-color: white;
+    transition: var(--transition);
+    border-radius: 50%;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+}
+
+.toggle-switch input:checked + .toggle-slider {
+    background-color: var(--toggle-active);
+}
+
+.toggle-switch input:checked + .toggle-slider:before {
+    transform: translateX(24px);
+}
+
+.toggle-switch input:focus + .toggle-slider {
+    box-shadow: 0 0 0 3px rgba(71, 153, 235, 0.3);
+}
+
+/* Preferences section */
+.preferences-group {
+    padding: 20px 0;
+}
+
+.preference-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="dark"] .preference-item {
+    border-bottom-color: rgba(255, 255, 255, 0.05);
+}
+
+.preference-item:last-child {
+    border-bottom: none;
+}
+
+.preference-label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.preference-label span:first-child {
+    font-weight: 500;
+    color: var(--text-main);
+}
+
+.preference-label span:last-child {
+    font-size: 13px;
+    color: var(--text-muted);
 }
 
 * {

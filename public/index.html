@@ -308,6 +308,28 @@
 
                 <!-- VIEW: Settings / Provider Info -->
                 <section id="view-settings" class="view">
+                    <!-- Preferences Card -->
+                    <div class="card glass-card mb-4">
+                        <div class="card-header">
+                            <h3><i class="ph ph-sliders-horizontal"></i> Preferences</h3>
+                        </div>
+                        <div class="card-body">
+                            <div class="preferences-group">
+                                <div class="preference-item">
+                                    <div class="preference-label">
+                                        <span><i class="ph ph-moon"></i> Dark Mode</span>
+                                        <span>Switch between light and dark theme</span>
+                                    </div>
+                                    <label class="toggle-switch">
+                                        <input type="checkbox" id="dark-mode-toggle">
+                                        <span class="toggle-slider"></span>
+                                    </label>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Provider Settings Card -->
                     <div class="card glass-card">
                         <div class="card-header">
                             <h3><i class="ph ph-buildings"></i> Provider & Facility Settings</h3>
@@ -697,6 +719,18 @@
                                     </button>
                                     <div id="intakeq-notes-loading" style="display:none; font-size:0.9rem; color:#666;"><i class="ph ph-spinner ph-spin"></i> Loading...</div>
                                     <ul class="file-list" id="intakeq-notes-list" style="margin-top:0;">
+                                        <!-- Populated via JS -->
+                                    </ul>
+                                </div>
+
+                                <div class="intakeq-files-section">
+                                    <h4 class="section-divider" style="margin-top:20px;"><i class="ph ph-folder-open"></i> IntakeQ Client Files</h4>
+                                    <p class="text-sm text-gray mb-2">Select files uploaded to the client's IntakeQ profile.</p>
+                                    <button type="button" class="btn btn-secondary btn-sm mb-3" id="btn-load-intakeq-files">
+                                        <i class="ph ph-arrows-clockwise"></i> Load Client Files
+                                    </button>
+                                    <div id="intakeq-files-loading" style="display:none; font-size:0.9rem; color:#666;"><i class="ph ph-spinner ph-spin"></i> Loading...</div>
+                                    <ul class="file-list" id="intakeq-files-list" style="margin-top:0;">
                                         <!-- Populated via JS -->
                                     </ul>
                                 </div>

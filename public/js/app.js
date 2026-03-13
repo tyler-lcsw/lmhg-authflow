@@ -22,6 +22,26 @@ let faxLogSortDir = 'desc';
 const views = document.querySelectorAll('.view');
 const navLinks = document.querySelectorAll('.nav-link');
 const loadingOverlay = document.getElementById('loading-overlay');
+const darkModeToggle = document.getElementById('dark-mode-toggle');
+
+// --- Dark Mode ---
+function initTheme() {
+    const savedTheme = localStorage.getItem('theme') || 'light';
+    document.documentElement.setAttribute('data-theme', savedTheme);
+    if (darkModeToggle) {
+        darkModeToggle.checked = savedTheme === 'dark';
+    }
+}
+
+if (darkModeToggle) {
+    darkModeToggle.addEventListener('change', (e) => {
+        const theme = e.target.checked ? 'dark' : 'light';
+        document.documentElement.setAttribute('data-theme', theme);
+        localStorage.setItem('theme', theme);
+    });
+}
+initTheme();
+
 
 // --- Navigation ---
 function switchView(viewId) {
@@ -1411,6 +1431,85 @@ document.getElementById('btn-load-intakeq-notes').addEventListener('click', asyn
     }
 });
 
+// --- IntakeQ Client Files Logic ---
+let intakeqFiles = []; // Stores files fetched from API
+let selectedIntakeqFiles = new Set();
+
+document.getElementById('btn-load-intakeq-files').addEventListener('click', async () => {
+    if (!currentClient || !currentClient.name) {
+        alert("No client selected.");
+        return;
+    }
+
+    const loader = document.getElementById('intakeq-files-loading');
+    const list = document.getElementById('intakeq-files-list');
+    const btn = document.getElementById('btn-load-intakeq-files');
+    
+    loader.style.display = 'block';
+    list.innerHTML = '';
+    btn.disabled = true;
+
+    try {
+        const iqId = currentClient.intakeq_client_id;
+        if (!iqId) {
+            list.innerHTML = '<li style="color:#666; font-size:0.9rem;">No IntakeQ Client ID linked. Sync from IntakeQ first.</li>';
+            return;
+        }
+
+        const filesUrl = `${API_BASE}/intakeq/files?intakeqClientId=${encodeURIComponent(iqId)}`;
+        const res = await fetch(filesUrl);
+        const data = await res.json();
+        
+        if (!res.ok) {
+            throw new Error(data.error || "Failed to fetch from IntakeQ");
+        }
+
+        intakeqFiles = data;
+        selectedIntakeqFiles.clear();
+        
+        if (!Array.isArray(intakeqFiles) || intakeqFiles.length === 0) {
+            list.innerHTML = '<li style="color:#666; font-size:0.9rem;">No uploaded files found for this client in IntakeQ.</li>';
+            return;
+        }
+
+        intakeqFiles.forEach(file => {
+            const li = document.createElement('li');
+            li.style.display = 'flex';
+            li.style.alignItems = 'center';
+            li.style.gap = '10px';
+            
+            li.innerHTML = `
+                <label class="custom-checkbox" style="margin:0; width:100%;">
+                    <input type="checkbox" value="${file.Id}" class="intakeq-file-cb"> 
+                    <span class="checkmark"></span>
+                    <i class="ph ph-file" style="color:var(--primary); margin: 0 5px;"></i>
+                    <strong>${file.FileName || 'Document'}</strong>
+                    <span style="font-size:0.8rem; color:#666; margin-left:auto;">(${file.ContentType || 'Unknown'})</span>
+                </label>
+            `;
+            list.appendChild(li);
+        });
+
+        // Add event listeners to checkboxes
+        document.querySelectorAll('.intakeq-file-cb').forEach(cb => {
+            cb.addEventListener('change', (e) => {
+                if (e.target.checked) {
+                    selectedIntakeqFiles.add(e.target.value);
+                } else {
+                    selectedIntakeqFiles.delete(e.target.value);
+                }
+            });
+        });
+
+    } catch (err) {
+        console.error("IntakeQ Files Error:", err);
+        list.innerHTML = `<li style="color:var(--danger); font-size:0.9rem;"><i class="ph ph-warning-circle"></i> Error: ${err.message}</li>`;
+    } finally {
+        loader.style.display = 'none';
+        btn.disabled = false;
+    }
+});
+
 // --- Submit Generation Request ---
 document.getElementById('btn-generate-pdf').addEventListener('click', async () => {
     const form = document.getElementById('auth-generate-form');
@@ -1471,6 +1570,11 @@ document.getElementById('btn-generate-pdf').addEventListener('click', async () =
     // Append IntakeQ Note IDs if any
     if (selectedIntakeqNotes.size > 0) {
         submitFormData.append('intakeqNotes', JSON.stringify(Array.from(selectedIntakeqNotes)));
+    }
+
+    // Append IntakeQ Client File IDs if any
+    if (selectedIntakeqFiles.size > 0) {
+        submitFormData.append('intakeqFiles', JSON.stringify(Array.from(selectedIntakeqFiles)));
     }
 
     // Append attachments

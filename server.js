@@ -461,6 +461,45 @@ app.post('/api/generate-auth', upload.array('attachments', 10), async (req, res)
             }
         }
 
+        // 3c. Merge IntakeQ Client Files if requested
+        if (req.body.intakeqFiles) {
+            try {
+                const fileIds = JSON.parse(req.body.intakeqFiles);
+                if (Array.isArray(fileIds) && fileIds.length > 0) {
+                    
+                    const settings = await new Promise((resolve, reject) => {
+                        db.get("SELECT intakeq_api_key FROM settings WHERE id = 1", (err, row) => {
+                            if (err) reject(err); else resolve(row || {});
+                        });
+                    });
+
+                    if (settings.intakeq_api_key) {
+                        const fetch = (await import('node-fetch')).default;
+                        
+                        for (const fileId of fileIds) {
+                            const response = await fetch(`https://intakeq.com/api/v1/files/${fileId}`, {
+                                method: 'GET',
+                                headers: { 'X-Auth-Key': settings.intakeq_api_key }
+                            });
+                            
+                            if (response.ok) {
+                                const arrayBuffer = await response.arrayBuffer();
+                                const filePdfBuffer = Buffer.from(arrayBuffer);
+                                
+                                const fileDoc = await PDFDocument.load(filePdfBuffer, { ignoreEncryption: true });
+                                const filePages = await mergedPdf.copyPages(fileDoc, fileDoc.getPageIndices());
+                                filePages.forEach(page => mergedPdf.addPage(page));
+                            } else {
+                                console.error(`Failed to fetch IntakeQ File ${fileId}: ${response.status}`);
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Error processing IntakeQ client files attachment:", err);
+            }
+        }
+
         // 3b. Merge Local File Attachments
         if (req.files && req.files.length > 0) {
             for (const file of req.files) {
@@ -914,6 +953,44 @@ app.post('/api/intakeq/upload-auth/:authId', async (req, res) => {
         res.json({ success: true, message: `Auth PDF uploaded to IntakeQ for "${auth.client_name}" (IntakeQ Client #${intakeqClientId})`, file: uploadResult });
     } catch (err) {
         console.error("IntakeQ Upload Auth Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- IntakeQ: Get Client Files ---
+app.get('/api/intakeq/files', async (req, res) => {
+    try {
+        const intakeqClientId = req.query.intakeqClientId;
+        if (!intakeqClientId) {
+            return res.status(400).json({ error: "intakeqClientId query parameter is required" });
+        }
+
+        const settings = await new Promise((resolve, reject) => {
+            db.get("SELECT intakeq_api_key FROM settings WHERE id = 1", (err, row) => {
+                if (err) reject(err);
+                else resolve(row || {});
+            });
+        });
+
+        if (!settings.intakeq_api_key) {
+            return res.status(400).json({ error: "IntakeQ API Key not configured in Settings." });
+        }
+
+        const fetch = (await import('node-fetch')).default;
+        const response = await fetch(`https://intakeq.com/api/v1/files?clientId=${intakeqClientId}`, {
+            method: 'GET',
+            headers: { 'X-Auth-Key': settings.intakeq_api_key }
+        });
+
+        if (!response.ok) {
+            const errText = await response.text();
+            throw new Error(`IntakeQ API Error: ${response.status} - ${errText}`);
+        }
+
+        const files = await response.json();
+        res.json(files);
+    } catch (err) {
+        console.error("IntakeQ Get Files Error:", err);
         res.status(500).json({ error: err.message });
     }
 });

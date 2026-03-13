@@ -35,7 +35,7 @@ node db.js          # Initialize/reset database (auto-runs on server start)
 - Single-page vanilla JS application (`js/app.js`)
 - View switching via CSS class toggling (no router)
 
-### Database Tables (SQLite)
+## Database Tables (SQLite)
 - `clients` - Patient demographics (name, Medicaid ID, DOB, PCP info, insurance flags, `intakeq_client_id`)
 - `settings` - Single-row config (id=1): provider defaults, SRFax credentials, IntakeQ API key
 - `provider_presets` - Saved provider/facility profiles (API still uses `/api/facilities` routes)
