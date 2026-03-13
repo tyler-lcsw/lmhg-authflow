@@ -335,9 +335,24 @@ app.get('/api/auth-requests/:id/download', (req, res) => {
 });
 
 app.get('/api/auth-requests/:id/preview', (req, res) => {
-    db.get("SELECT pdf_path FROM auth_requests WHERE id = ?", [req.params.id], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!row || !fs.existsSync(row.pdf_path)) return res.status(404).json({ error: "Not found" });
+    const id = req.params.id;
+    console.log(`[PREVIEW] Request received for ID: ${id}`);
+    
+    db.get("SELECT pdf_path FROM auth_requests WHERE id = ?", [id], (err, row) => {
+        if (err) {
+            console.error(`[PREVIEW] DB Error for ID ${id}:`, err);
+            return res.status(500).json({ error: err.message });
+        }
+        if (!row) {
+            console.warn(`[PREVIEW] No auth record found for ID: ${id}`);
+            return res.status(404).json({ error: "Auth request not found" });
+        }
+        if (!row.pdf_path || !fs.existsSync(row.pdf_path)) {
+            console.warn(`[PREVIEW] PDF file not found at path: ${row.pdf_path}`);
+            return res.status(404).json({ error: "PDF file not found. Ensure the authorization has been generated." });
+        }
+        
+        console.log(`[PREVIEW] Serving file: ${row.pdf_path}`);
         res.sendFile(row.pdf_path);
     });
 });
@@ -626,6 +641,7 @@ app.post('/api/send-fax/:authId', async (req, res) => {
 app.post('/api/check-fax-status/:authId', async (req, res) => {
     try {
         const authId = req.params.authId;
+        console.log(`[FAX STATUS] Checking for Auth ID: ${authId}`);
 
         // Get fax_details_id from auth
         const auth = await new Promise((resolve, reject) => {
@@ -635,7 +651,13 @@ app.post('/api/check-fax-status/:authId', async (req, res) => {
             });
         });
 
-        if (!auth || !auth.fax_details_id) {
+        if (!auth) {
+            console.warn(`[FAX STATUS] Auth request ${authId} not found.`);
+            return res.status(404).json({ error: "Authorization request not found." });
+        }
+
+        if (!auth.fax_details_id) {
+            console.warn(`[FAX STATUS] No fax_details_id for Auth request ${authId}.`);
             return res.status(400).json({ error: "No fax has been sent for this auth request." });
         }
 
@@ -647,24 +669,32 @@ app.post('/api/check-fax-status/:authId', async (req, res) => {
             });
         });
 
+        if (!settings.srfax_access_id || !settings.srfax_access_pwd) {
+            console.error(`[FAX STATUS] SRFax credentials missing in settings.`);
+            return res.status(400).json({ error: "SRFax credentials not configured." });
+        }
+
         const creds = {
             access_id: settings.srfax_access_id,
             access_pwd: settings.srfax_access_pwd
         };
 
+        console.log(`[FAX STATUS] Querying SRFax for DetailsID: ${auth.fax_details_id}`);
         const result = await checkFaxStatus(creds, auth.fax_details_id);
+        console.log(`[FAX STATUS] SRFax Response: ${JSON.stringify(result)}`);
 
         if (result.Status === 'Success') {
             const sentStatus = result.Result.SentStatus || 'Unknown';
             db.run("UPDATE auth_requests SET fax_status = ? WHERE id = ?", [sentStatus, authId]);
             res.json({ success: true, faxStatus: sentStatus, details: result.Result });
         } else {
+            console.error(`[FAX STATUS] SRFax API Error: ${result.Result}`);
             res.status(400).json({ error: `SRFax error: ${result.Result}` });
         }
 
     } catch (err) {
         console.error("Check Fax Status Error:", err);
-        res.status(500).json({ error: err.message });
+        res.status(500).json({ error: err.message || "Internal server error" });
     }
 });
 

@@ -93,6 +93,26 @@ document.querySelectorAll('.tab-header').forEach(header => {
     });
 });
 
+// --- UnitedHealthcare Logic ---
+window.checkUhcStatus = () => {
+    const mcoSelect = document.querySelector('select[name="mco"]');
+    const warning = document.getElementById('uhc-portal-warning');
+    const faxBtn = document.getElementById('btn-send-fax');
+
+    if (!mcoSelect) return;
+
+    if (mcoSelect.value === 'united') {
+        if (warning) warning.style.display = 'block';
+        if (faxBtn) faxBtn.style.display = 'none';
+        const layer = document.getElementById('inline-fax-layer');
+        if (layer) layer.style.display = 'none';
+    } else {
+        if (warning) warning.style.display = 'none';
+        if (faxBtn) faxBtn.style.display = 'inline-flex';
+    }
+};
+document.querySelector('select[name="mco"]')?.addEventListener('change', window.checkUhcStatus);
+
 document.getElementById('btn-add-client').addEventListener('click', () => {
     document.getElementById('client-form').reset();
     document.getElementById('client_id').value = '';
@@ -101,7 +121,7 @@ document.getElementById('btn-add-client').addEventListener('click', () => {
 });
 
 // === API CALLS & DATA HANDLING ===
-const API_BASE = 'http://localhost:3000/api';
+const API_BASE = '/api';
 
 // --- Clients ---
 async function loadClients() {
@@ -799,6 +819,8 @@ document.getElementById('btn-new-auth').addEventListener('click', async () => {
     } catch (err) {
         console.error("Error pre-filling from history:", err);
     }
+    
+    window.checkUhcStatus();
 
     // Set today's date (this will override any copied date, which is usually desired for new auths)
     document.getElementById('auth-generate-form').elements['date'].value = new Date().toISOString().split('T')[0];
@@ -1109,8 +1131,17 @@ window.downloadAuth = (id) => {
 };
 
 window.previewAuth = (id) => {
+    console.log('[PREVIEW] Opening for ID:', id);
+    if (!id || id === 'undefined') {
+        alert('Invalid Auth ID for preview.');
+        return;
+    }
     const modal = document.getElementById('preview-modal');
     const iframe = document.getElementById('preview-iframe');
+    if (!modal || !iframe) {
+        console.error('[PREVIEW] Modal or iframe elements not found');
+        return;
+    }
     iframe.src = `${API_BASE}/auth-requests/${id}/preview`;
     modal.classList.add('active');
 };
@@ -1170,6 +1201,7 @@ function populateAuthForm(data) {
             }
         }
     }
+    window.checkUhcStatus();
 }
 
 // --- Update Clinical Status ---
@@ -1720,6 +1752,13 @@ document.getElementById('btn-send-fax').addEventListener('click', async () => {
     
     pendingFaxAuthId = authIdInput.value;
     
+    // UHC Check
+    const mcoSelect = document.querySelector('select[name="mco"]');
+    if (mcoSelect && mcoSelect.value === 'united') {
+        alert("UnitedHealthcare does not accept faxes. Please submit via their portal.");
+        return;
+    }
+    
     // Reset and Show Layer
     document.getElementById('fax_to_number').value = '';
     const errDiv = document.getElementById('fax-layer-error');
@@ -1793,6 +1832,10 @@ window.openFaxModal = async (authId) => {
         const auth = await res.json();
         if (auth.form_data) {
             const data = JSON.parse(auth.form_data);
+            if (data.mco === 'united') {
+                alert("UnitedHealthcare does not accept faxes. Please submit via their portal.");
+                return;
+            }
             const mcoVal = data.mco;
             const match = mcoDirectory.find(m => m.mco_name.toLowerCase().includes(mcoVal) || mcoVal.includes(m.mco_name.toLowerCase()));
             if (match) {
@@ -1877,12 +1920,17 @@ function startFaxPolling() {
              try {
                  const res = await fetch(`${API_BASE}/check-fax-status/${authId}`, { method: 'POST' });
                  if (res.ok) {
-                     const result = await res.json();
-                     if (result.success && result.faxStatus !== 'In Progress' && result.faxStatus !== 'Unknown') {
-                         needsRefresh = true;
+                     const contentType = res.headers.get("content-type");
+                     if (contentType && contentType.indexOf("application/json") !== -1) {
+                         const result = await res.json();
+                         if (result.success && result.faxStatus !== 'In Progress' && result.faxStatus !== 'Unknown') {
+                             needsRefresh = true;
+                         }
                      }
                  }
-             } catch(e) { /* silent fail */ }
+             } catch(e) { 
+                 console.error(`Background poll error for auth ${authId}:`, e);
+             }
         }
         
         // Reset spinners
@@ -1908,15 +1956,25 @@ function startFaxPolling() {
 window.refreshFaxStatus = async (authId) => {
     try {
         const res = await fetch(`${API_BASE}/check-fax-status/${authId}`, { method: 'POST' });
-        const result = await res.json();
-        if (res.ok && result.success) {
-            alert('Fax status: ' + result.faxStatus);
-            if (currentClient) loadAuthHistory(currentClient.id);
+        
+        const contentType = res.headers.get("content-type");
+        if (contentType && contentType.indexOf("application/json") !== -1) {
+            const result = await res.json();
+            if (res.ok && result.success) {
+                alert('Fax status: ' + result.faxStatus);
+                if (currentClient) loadAuthHistory(currentClient.id);
+            } else {
+                alert(result.error || 'Could not check fax status.');
+            }
         } else {
-            alert(result.error || 'Could not check fax status.');
+            // Not JSON - likely an HTML error page from the server
+            const text = await res.text();
+            console.error('Non-JSON response received:', text);
+            alert(`Server Error: Received unexpected response format (HTTP ${res.status}). Check server logs.`);
         }
     } catch (err) {
         console.error('Error checking fax status:', err);
+        alert('Network error: ' + err.message);
     }
 };
 // --- Calendar ---
