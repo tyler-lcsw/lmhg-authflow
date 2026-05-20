@@ -2,9 +2,6 @@ const https = require('https');
 
 const SRFAX_URL = 'https://www.srfax.com/SRF_SecWebSvc.php';
 
-/**
- * Generic POST to SRFax API
- */
 function srfaxPost(data) {
     return new Promise((resolve, reject) => {
         const postData = JSON.stringify(data);
@@ -39,23 +36,22 @@ function srfaxPost(data) {
     });
 }
 
-/**
- * Queue a fax with a PDF file
- * @param {Object} creds - { access_id, access_pwd, caller_id, sender_email }
- * @param {string} toFaxNumber - 11-digit recipient fax number
- * @param {string} fileName - name of the PDF file (e.g. "auth_request.pdf")
- * @param {Buffer} fileBuffer - raw PDF file contents
- * @returns {Promise<{Status: string, Result: string}>}
- */
-async function sendFax(creds, toFaxNumber, fileName, fileBuffer) {
-    // Validate inputs
+let defaultPoster = srfaxPost;
+function __setPoster(fn) { defaultPoster = fn || srfaxPost; }
+function __resetPoster() { defaultPoster = srfaxPost; }
+
+function normalizeCallerId(value) {
+    const digits = String(value).replace(/\D/g, '');
+    return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+}
+
+async function sendFax(creds, toFaxNumber, fileName, fileBuffer, { post } = {}) {
     if (!creds.access_id || !creds.access_pwd || !creds.caller_id) {
         throw new Error('Missing SRFax credentials: access_id, access_pwd, or caller_id.');
     }
 
-    // SRFax specific formatting: CallerID must be 10 digits, ToNumber must be 11 digits (including country code)
-    const formattedCallerID = creds.caller_id.replace(/\D/g, '');
-    const formattedToNumber = toFaxNumber.replace(/\D/g, '');
+    const formattedCallerID = normalizeCallerId(creds.caller_id);
+    const formattedToNumber = String(toFaxNumber).replace(/\D/g, '');
 
     if (formattedCallerID.length !== 10) {
         throw new Error(`Invalid Sender Fax Number (Caller ID): ${formattedCallerID}. Must be exactly 10 digits.`);
@@ -79,16 +75,10 @@ async function sendFax(creds, toFaxNumber, fileName, fileBuffer) {
         sFileContent_1: fileBase64
     };
 
-    return srfaxPost(payload);
+    return (post || defaultPoster)(payload);
 }
 
-/**
- * Check the delivery status of a fax
- * @param {Object} creds - { access_id, access_pwd }
- * @param {string} faxDetailsID - the FaxDetailsID from Queue_Fax
- * @returns {Promise<{Status: string, Result: Object|string}>}
- */
-async function checkFaxStatus(creds, faxDetailsID) {
+async function checkFaxStatus(creds, faxDetailsID, { post } = {}) {
     const payload = {
         action: 'Get_FaxStatus',
         access_id: creds.access_id,
@@ -97,7 +87,7 @@ async function checkFaxStatus(creds, faxDetailsID) {
         sResponseFormat: 'JSON'
     };
 
-    return srfaxPost(payload);
+    return (post || defaultPoster)(payload);
 }
 
-module.exports = { sendFax, checkFaxStatus };
+module.exports = { sendFax, checkFaxStatus, srfaxPost, __setPoster, __resetPoster };

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>API Diagnostics — SRFax & IntakeQ</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root { --bg:#0f172a; --panel:#1e293b; --border:#334155; --fg:#f1f5f9; --muted:#94a3b8; --ok:#22c55e; --warn:#f59e0b; --err:#ef4444; --brand:#3b82f6; }
+* { box-sizing: border-box; }
+body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--fg); margin: 0; padding: 24px; }
+.wrap { max-width: 1100px; margin: 0 auto; }
+h1 { margin-top: 0; font-size: 22px; }
+h2 { border-bottom: 1px solid var(--border); padding-bottom: 8px; font-size: 16px; color: var(--brand); margin-top: 0; }
+h3 { font-size: 13px; color: var(--muted); margin: 16px 0 6px; text-transform: uppercase; letter-spacing: 0.05em; }
+.grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+@media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px; }
+.row { display: flex; gap: 8px; margin: 8px 0; flex-wrap: wrap; }
+input[type=text] { flex: 1; min-width: 160px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 6px; background: #0b1220; color: var(--fg); font: inherit; }
+button { padding: 8px 14px; background: var(--brand); color: white; border: none; border-radius: 6px; font: inherit; font-weight: 500; cursor: pointer; }
+button:hover { filter: brightness(1.1); }
+button.secondary { background: #475569; }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+pre { background: #020617; border: 1px solid var(--border); border-radius: 6px; padding: 12px; overflow-x: auto; font-size: 12px; color: #e2e8f0; max-height: 320px; }
+.status-ok { color: var(--ok); }
+.status-warn { color: var(--warn); }
+.status-err { color: var(--err); }
+.hint { color: var(--muted); font-size: 12px; margin: 4px 0 8px; }
+a { color: var(--brand); }
+</style>
+</head>
+<body>
+<div class="wrap">
+<h1>API Diagnostics</h1>
+<p class="hint"><a href="/">← Back to app</a> &nbsp;·&nbsp; Use this page to smoke-test SRFax and IntakeQ integrations. All calls hit the local API.</p>
+
+<div class="grid">
+
+<!-- ============ SRFAX ============ -->
+<div class="panel">
+<h2><i></i> SRFax</h2>
+
+<h3>1. Credential Diagnostic</h3>
+<p class="hint">Masked credentials + number format validation. No API call to SRFax.</p>
+<div class="row"><button onclick="runDiag()">Run /api/diag-fax</button></div>
+<pre id="diag-out">—</pre>
+
+<h3>2. Send Test Fax</h3>
+<p class="hint">Sends a minimal PDF. Leave blank for caller-ID loopback. Facility fax is pre-filled.</p>
+<div class="row">
+    <input id="to-fax" type="text" value="8889771527" placeholder="Leave blank for loopback">
+    <button onclick="sendTestFax()">Send Test Fax</button>
+</div>
+<pre id="send-out">—</pre>
+
+<h3>3. Check Fax Status</h3>
+<p class="hint">Uses faxDetailsId from the test send above (or paste one).</p>
+<div class="row">
+    <input id="fax-id" type="text" placeholder="Fax Details ID">
+    <button onclick="checkFaxStatus()">Check Status</button>
+    <button class="secondary" onclick="pollStatus()">Poll Until Done</button>
+</div>
+<pre id="status-out">—</pre>
+</div>
+
+<!-- ============ INTAKEQ ============ -->
+<div class="panel">
+<h2><i></i> IntakeQ</h2>
+
+<h3>1. Client Search</h3>
+<p class="hint">Search IntakeQ by name.</p>
+<div class="row">
+    <input id="iq-name" type="text" placeholder="Client name">
+    <button onclick="searchClient()">Search</button>
+</div>
+<pre id="search-out">—</pre>
+
+<h3>2. List Client Files</h3>
+<div class="row">
+    <input id="iq-files-id" type="text" placeholder="IntakeQ Client ID">
+    <button onclick="listFiles()">List Files</button>
+</div>
+<pre id="files-out">—</pre>
+
+<h3>3. Upload Auth PDF to Chart</h3>
+<p class="hint">Triggers <code>/api/intakeq/upload-auth/:authId</code>. This is the flow with the reported JSON error.</p>
+<div class="row">
+    <input id="iq-auth-id" type="text" placeholder="Auth Request ID (number)">
+    <button onclick="uploadAuth()">Upload</button>
+</div>
+<pre id="upload-out">—</pre>
+</div>
+
+</div><!-- /grid -->
+</div>
+
+<script>
+const API = '/api';
+
+function show(elId, ok, data) {
+    const el = document.getElementById(elId);
+    const cls = ok ? 'status-ok' : 'status-err';
+    const prefix = ok ? '✓ OK' : '✗ ERROR';
+    el.innerHTML = `<span class="${cls}">${prefix}</span>\n` + JSON.stringify(data, null, 2);
+}
+
+async function call(url, init = {}) {
+    const resp = await fetch(url, init);
+    const text = await resp.text();
+    let parsed;
+    try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { raw: text }; }
+    return { ok: resp.ok, status: resp.status, body: parsed };
+}
+
+async function runDiag() {
+    const r = await call(`${API}/diag-fax`, { method: 'POST' });
+    show('diag-out', r.ok && r.body.all_valid, r.body);
+}
+
+async function sendTestFax() {
+    const toFax = document.getElementById('to-fax').value.trim();
+    const init = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
+    if (toFax) init.body = JSON.stringify({ toFax });
+    const r = await call(`${API}/send-test-fax`, init);
+    show('send-out', r.ok && r.body.success, r.body);
+    if (r.ok && r.body.faxDetailsId) document.getElementById('fax-id').value = r.body.faxDetailsId;
+}
+
+async function checkFaxStatus() {
+    const faxDetailsId = document.getElementById('fax-id').value.trim();
+    if (!faxDetailsId) return alert('Enter a Fax Details ID first.');
+    const r = await call(`${API}/fax-status`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ faxDetailsId })
+    });
+    show('status-out', r.ok, r.body);
+    return r.body;
+}
+
+async function pollStatus() {
+    const faxDetailsId = document.getElementById('fax-id').value.trim();
+    if (!faxDetailsId) return alert('Enter a Fax Details ID first.');
+    const out = document.getElementById('status-out');
+    const deadline = Date.now() + 120000;
+    let attempt = 0;
+    while (Date.now() < deadline) {
+        attempt += 1;
+        out.textContent = `Polling… attempt ${attempt}`;
+        const body = await checkFaxStatus();
+        const status = body && body.faxStatus;
+        if (status && status !== 'In Progress' && status !== 'Queued' && status !== 'Unknown') {
+            out.innerHTML = `<span class="status-ok">✓ Final status: ${status}</span>\n` + JSON.stringify(body, null, 2);
+            return;
+        }
+        await new Promise(r => setTimeout(r, 10000));
+    }
+    out.innerHTML = `<span class="status-warn">⚠ Timed out after 2 min</span>`;
+}
+
+async function searchClient() {
+    const name = document.getElementById('iq-name').value.trim();
+    if (!name) return alert('Enter a name.');
+    const r = await call(`${API}/intakeq/client-search?name=${encodeURIComponent(name)}`);
+    show('search-out', r.ok, r.body);
+}
+
+async function listFiles() {
+    const id = document.getElementById('iq-files-id').value.trim();
+    if (!id) return alert('Enter an IntakeQ Client ID.');
+    const r = await call(`${API}/intakeq/files?intakeqClientId=${encodeURIComponent(id)}`);
+    show('files-out', r.ok, r.body);
+}
+
+async function uploadAuth() {
+    const authId = document.getElementById('iq-auth-id').value.trim();
+    if (!authId) return alert('Enter an Auth Request ID.');
+    const r = await call(`${API}/intakeq/upload-auth/${encodeURIComponent(authId)}`, { method: 'POST' });
+    show('upload-out', r.ok && r.body.success, r.body);
+}
+</script>
+</body>
+</html>

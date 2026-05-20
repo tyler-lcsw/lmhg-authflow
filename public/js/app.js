@@ -3,6 +3,7 @@ let clients = [];
 let currentClient = null;
 let settings = {};
 let facilities = [];
+let pcpDirectory = [];
 let mcoDirectory = [];
 let faxLogData = [];
 let uploadedFiles = []; // Array of File objects
@@ -11,12 +12,44 @@ let pendingFaxesToPoll = new Set(); // Track in-progress faxes for polling
 let authAutoSaveTimeout = null;
 let currentCalendarDate = new Date();
 let allAuthsForCalendar = [];
+let authStepQueue = new Set(['tab-form']);
 
 // Sorting State
 let clientsSortField = 'name';
 let clientsSortDir = 'asc';
 let faxLogSortField = 'fax_sent_date';
 let faxLogSortDir = 'desc';
+
+function isPollableFaxStatus(status) {
+    return status === 'In Progress' || status === 'Queued';
+}
+
+let faxPollingIndicatorTimeout = null;
+function setFaxPollingIndicator(state) {
+    const syncIndicator = document.getElementById('sync-indicator');
+    if (!syncIndicator) return;
+
+    if (faxPollingIndicatorTimeout) {
+        clearTimeout(faxPollingIndicatorTimeout);
+        faxPollingIndicatorTimeout = null;
+    }
+
+    syncIndicator.classList.remove('sent', 'checking');
+    if (state === 'checking') {
+        syncIndicator.classList.add('checking');
+        syncIndicator.innerHTML = '<i class="ph ph-arrows-clockwise ph-spin"></i> Checking fax statuses...';
+        syncIndicator.style.display = 'flex';
+    } else if (state === 'sent') {
+        syncIndicator.classList.add('sent');
+        syncIndicator.innerHTML = '<i class="ph ph-check-circle"></i> Fax sent';
+        syncIndicator.style.display = 'flex';
+        faxPollingIndicatorTimeout = setTimeout(() => {
+            syncIndicator.style.display = 'none';
+        }, 5000);
+    } else {
+        syncIndicator.style.display = 'none';
+    }
+}
 
 // === DOM ELEMENTS ===
 const views = document.querySelectorAll('.view');
@@ -59,6 +92,7 @@ function switchView(viewId) {
     if (viewId === 'dashboard') loadClients();
     if (viewId === 'settings') loadSettings();
     if (viewId === 'facilities') loadFacilities();
+    if (viewId === 'pcp-directory') loadPcpDirectory();
     if (viewId === 'fax-log') loadFaxLog();
     if (viewId === 'calendar') loadCalendar();
 }
@@ -77,19 +111,81 @@ document.querySelectorAll('.nav-back').forEach(el => {
     });
 });
 
+function setAuthFlowError(message = '') {
+    const error = document.getElementById('auth-flow-error');
+    if (!error) return;
+    error.textContent = message;
+    error.style.display = message ? 'block' : 'none';
+}
+
+function setAuthStep(targetTabId) {
+    const pane = document.getElementById(targetTabId);
+    const header = document.querySelector(`.tab-header[data-tab="${targetTabId}"]`);
+    const container = header && header.closest('.tabs-container');
+    if (!pane || !container) return false;
+
+    container.querySelectorAll('.tab-header').forEach(h => h.classList.remove('active'));
+    container.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+    header.classList.add('active');
+    pane.classList.add('active');
+    authStepQueue.add(targetTabId);
+    setAuthFlowError('');
+    return true;
+}
+
+function resetAuthStepQueue() {
+    authStepQueue = new Set(['tab-form']);
+    document.getElementById('auth-generate-step')?.classList.remove('completed');
+    document.getElementById('auth-fax-step')?.classList.remove('completed');
+    setAuthStep('tab-form');
+}
+
+function markAuthGenerated(authId = '') {
+    if (authId) {
+        const form = document.getElementById('auth-generate-form');
+        let input = document.getElementById('auth_id_input');
+        if (!input && form) {
+            input = document.createElement('input');
+            input.type = 'hidden';
+            input.id = 'auth_id_input';
+            input.name = 'auth_id';
+            form.appendChild(input);
+        }
+        if (input) input.value = authId;
+    }
+    authStepQueue.add('generate-pdf');
+    document.getElementById('auth-generate-step')?.classList.add('completed');
+    setAuthFlowError('');
+}
+
+function requireGeneratedPdfForFax() {
+    const authId = document.getElementById('auth_id_input')?.value;
+    if (!authStepQueue.has('generate-pdf') || !authId) {
+        setAuthFlowError('Generate the PDF before starting the optional fax step.');
+        return false;
+    }
+    return true;
+}
+
+function requireAuthStep(targetTabId) {
+    const required = {
+        'tab-attachments': ['tab-form'],
+        'tab-actions': ['tab-form', 'tab-attachments']
+    }[targetTabId] || [];
+    const missing = required.find(step => !authStepQueue.has(step));
+    if (missing) {
+        setAuthStep(missing);
+        setAuthFlowError('Complete the authorization workflow in order: 1 Form Data, 2 Attachments, 3 Actions & History.');
+        return false;
+    }
+    return true;
+}
+
 // Tab Switching Logic
 document.querySelectorAll('.tab-header').forEach(header => {
     header.addEventListener('click', (e) => {
         const targetTabId = e.currentTarget.dataset.tab;
-        const container = e.currentTarget.closest('.tabs-container');
-        if (!container) return;
-
-        container.querySelectorAll('.tab-header').forEach(h => h.classList.remove('active'));
-        container.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-        
-        e.currentTarget.classList.add('active');
-        const pane = document.getElementById(targetTabId);
-        if (pane) pane.classList.add('active');
+        if (requireAuthStep(targetTabId)) setAuthStep(targetTabId);
     });
 });
 
@@ -116,8 +212,19 @@ document.querySelector('select[name="mco"]')?.addEventListener('change', window.
 document.getElementById('btn-add-client').addEventListener('click', () => {
     document.getElementById('client-form').reset();
     document.getElementById('client_id').value = '';
+    setInsuranceInjuryDefaults();
+    clearPcpMatchStatus();
+    const hiddenIqId = document.getElementById('c_intakeq_client_id');
+    if (hiddenIqId) hiddenIqId.value = '';
+    ['c_intakeq_pcp_field_id', 'c_intakeq_pcp_phone_field_id', 'c_intakeq_pcp_npi_field_id'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
     document.getElementById('client-form-title').innerText = 'New Client';
-    switchView('client-form');
+    ensurePcpDirectoryLoaded().then(() => {
+        populateClientPcpSelect();
+        switchView('client-form');
+    });
 });
 
 // === API CALLS & DATA HANDLING ===
@@ -161,6 +268,113 @@ function renderClientsTable(data) {
         tbody.appendChild(tr);
     });
 }
+
+async function ensurePcpDirectoryLoaded() {
+    if (pcpDirectory.length === 0) {
+        await loadPcpDirectory();
+    }
+}
+
+function populateClientPcpSelect(selectedId = '') {
+    const select = document.getElementById('c_pcp_existing');
+    if (!select) return;
+    select.innerHTML = '<option value="">Select existing PCP...</option>';
+    pcpDirectory.forEach(pcp => {
+        const option = document.createElement('option');
+        option.value = pcp.id;
+        option.textContent = pcp.name || '';
+        option.selected = String(pcp.id) === String(selectedId);
+        select.appendChild(option);
+    });
+}
+
+function normalizeDigits(value) {
+    return String(value || '').replace(/\D/g, '');
+}
+
+function normalizeLookupText(value) {
+    return String(value || '').trim().replace(/\s+/g, ' ').toLowerCase();
+}
+
+function setInsuranceInjuryDefaults() {
+    ['c_work_injury', 'c_mva', 'c_other_insurance'].forEach(id => {
+        const select = document.getElementById(id);
+        if (select) select.value = 'no';
+    });
+}
+
+function setPcpMatchStatus(message = '') {
+    const status = document.getElementById('pcp-match-status');
+    if (status) status.textContent = message;
+}
+
+function clearPcpMatchStatus() {
+    setPcpMatchStatus('');
+    ['c_pcp_existing', 'c_pcp', 'c_pcp_phone', 'c_pcp_npi'].forEach(id => {
+        document.getElementById(id)?.classList.remove('pcp-found-highlight');
+    });
+}
+
+function fillClientPcpFields(pcp, { showFound = false } = {}) {
+    if (!pcp) return;
+    const select = document.getElementById('c_pcp_existing');
+    if (select) {
+        select.value = pcp.id;
+        select.classList.toggle('pcp-found-highlight', showFound);
+    }
+    document.getElementById('c_pcp').value = pcp.name || '';
+    document.getElementById('c_pcp_phone').value = pcp.phone || '';
+    document.getElementById('c_pcp_npi').value = pcp.npi || '';
+    ['c_pcp', 'c_pcp_phone', 'c_pcp_npi'].forEach(id => {
+        document.getElementById(id)?.classList.toggle('pcp-found-highlight', showFound);
+    });
+    setPcpMatchStatus(showFound ? 'PCP found' : '');
+}
+
+function findExistingPcpMatch() {
+    const npi = normalizeDigits(document.getElementById('c_pcp_npi')?.value);
+    const phone = normalizeDigits(document.getElementById('c_pcp_phone')?.value);
+    const name = normalizeLookupText(document.getElementById('c_pcp')?.value);
+
+    if (npi) {
+        const match = pcpDirectory.find(pcp => normalizeDigits(pcp.npi) === npi);
+        if (match) return match;
+    }
+    if (phone.length >= 7) {
+        const match = pcpDirectory.find(pcp => normalizeDigits(pcp.phone) === phone);
+        if (match) return match;
+    }
+    if (name) {
+        const match = pcpDirectory.find(pcp => normalizeLookupText(pcp.name) === name);
+        if (match) return match;
+    }
+    return null;
+}
+
+async function checkForExistingPcp() {
+    await ensurePcpDirectoryLoaded();
+    const match = findExistingPcpMatch();
+    if (match) {
+        fillClientPcpFields(match, { showFound: true });
+    } else {
+        const selectedId = document.getElementById('c_pcp_existing')?.value;
+        if (!selectedId) clearPcpMatchStatus();
+    }
+}
+
+document.getElementById('c_pcp_existing')?.addEventListener('change', (e) => {
+    const pcp = pcpDirectory.find(item => String(item.id) === String(e.target.value));
+    if (!pcp) {
+        clearPcpMatchStatus();
+        return;
+    }
+    fillClientPcpFields(pcp);
+});
+
+['c_pcp', 'c_pcp_phone', 'c_pcp_npi'].forEach(id => {
+    document.getElementById(id)?.addEventListener('input', checkForExistingPcp);
+    document.getElementById(id)?.addEventListener('blur', checkForExistingPcp);
+});
 
 window.sortClients = (field) => {
     if (clientsSortField === field) {
@@ -220,13 +434,16 @@ function renderFaxLogTable(data) {
         let statusBadge = '';
         if (item.fax_status === 'Sent' || item.fax_status === 'Success') {
             statusBadge = '<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;">✓ Sent</span>';
-        } else if (item.fax_status === 'In Progress' || item.fax_status === 'Queued') {
+            pendingFaxesToPoll.delete(item.id);
+        } else if (isPollableFaxStatus(item.fax_status)) {
             statusBadge = '<span style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;"><i class="ph ph-spinner ph-spin pulse-glow"></i> Polling</span>';
             pendingFaxesToPoll.add(item.id);
         } else if (item.fax_status === 'Failed' || item.fax_status?.includes('Error')) {
             statusBadge = '<span style="background:#ef4444;color:#fff;padding:4px 10px;border-radius:12px;font-size:0.8rem;font-weight:bold;border:2px solid #7f1d1d;text-transform:uppercase;">🚨 Failed</span>';
+            pendingFaxesToPoll.delete(item.id);
         } else {
             statusBadge = '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;">' + (item.fax_status || 'Unknown') + '</span>';
+            pendingFaxesToPoll.delete(item.id);
         }
 
         const tr = document.createElement('tr');
@@ -289,9 +506,17 @@ document.getElementById('btn-sync-intakeq').addEventListener('click', async () =
 
     try {
         const res = await fetch(`${API_BASE}/intakeq/client-search?name=${encodeURIComponent(searchName)}`);
-        const data = await res.json();
+        const raw = await res.text();
+        let data = {};
+        try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
 
-        if (!res.ok) throw new Error(data.error || "Failed to search IntakeQ");
+        if (!res.ok) {
+            const parts = [data.error || `Failed to search IntakeQ (HTTP ${res.status})`];
+            if (data.upstreamStatus) parts.push(`IntakeQ HTTP ${data.upstreamStatus}`);
+            if (data.detail) parts.push(data.detail);
+            if (data.traceId) parts.push(`Trace ${data.traceId}`);
+            throw new Error(parts.join(' - '));
+        }
 
         loader.style.display = 'none';
 
@@ -323,6 +548,14 @@ document.getElementById('btn-sync-intakeq').addEventListener('click', async () =
     }
 });
 
+function mapImportedPolicyNumber(policyNumber) {
+    const value = String(policyNumber || '').trim();
+    if (!value) return { medicaid_id: '', mco_id: '' };
+    return /^(00|000)/.test(value)
+        ? { medicaid_id: value, mco_id: '' }
+        : { medicaid_id: '', mco_id: value };
+}
+
 function applyIntakeqClientData(client) {
     // Map IntakeQ fields to local client form fields
     const name = client.Name || `${client.FirstName || ''} ${client.LastName || ''}`.trim();
@@ -340,10 +573,18 @@ function applyIntakeqClientData(client) {
         document.getElementById('c_insurer').value = client.PrimaryInsuranceCompany;
         document.getElementById('c_other_insurance').value = 'yes';
     }
-    // Policy # — map to MCO ID if available
+    // Policy # — classify by the local leading-zero Medicaid convention.
     if (client.PrimaryInsurancePolicyNumber) {
-        document.getElementById('c_mco_id').value = client.PrimaryInsurancePolicyNumber;
+        const mappedPolicy = mapImportedPolicyNumber(client.PrimaryInsurancePolicyNumber);
+        document.getElementById('c_medicaid_id').value = mappedPolicy.medicaid_id;
+        document.getElementById('c_mco_id').value = mappedPolicy.mco_id;
     }
+
+    const pcpCustomFields = extractPcpCustomFields(client);
+    if (pcpCustomFields.pcp) document.getElementById('c_pcp').value = pcpCustomFields.pcp;
+    if (pcpCustomFields.pcp_phone) document.getElementById('c_pcp_phone').value = pcpCustomFields.pcp_phone;
+    if (pcpCustomFields.pcp_npi) document.getElementById('c_pcp_npi').value = pcpCustomFields.pcp_npi;
+    checkForExistingPcp();
 
     // Store the IntakeQ sequential client number in a hidden field for persistence
     const iqClientId = client.ClientId || client.ClientNumber || '';
@@ -355,6 +596,9 @@ function applyIntakeqClientData(client) {
         document.getElementById('client-form').appendChild(hiddenIqId);
     }
     hiddenIqId.value = iqClientId;
+    setHiddenValue('c_intakeq_pcp_field_id', pcpCustomFields.fieldIds.pcp || '');
+    setHiddenValue('c_intakeq_pcp_phone_field_id', pcpCustomFields.fieldIds.pcp_phone || '');
+    setHiddenValue('c_intakeq_pcp_npi_field_id', pcpCustomFields.fieldIds.pcp_npi || '');
 
     // Collapse the panel after import
     const panel = document.getElementById('intakeq-sync-panel');
@@ -367,18 +611,58 @@ function applyIntakeqClientData(client) {
     setTimeout(() => { formTitle.innerText = prev; }, 3000);
 }
 
+function setHiddenValue(id, value) {
+    let input = document.getElementById(id);
+    if (!input) {
+        input = document.createElement('input');
+        input.type = 'hidden';
+        input.id = id;
+        document.getElementById('client-form').appendChild(input);
+    }
+    input.value = value;
+}
+
+function extractPcpCustomFields(client) {
+    const result = {
+        pcp: '',
+        pcp_phone: '',
+        pcp_npi: '',
+        fieldIds: {}
+    };
+    const matchers = {
+        pcp: [/^primary care name$/i, /^primary care provider$/i, /^primary care provider name$/i, /^pcp$/i, /^pcp name$/i],
+        pcp_phone: [/^primary care phone$/i, /^primary care provider phone$/i, /^pcp phone$/i, /^pcp phone number$/i],
+        pcp_npi: [/^primary care npi$/i, /^primary care provider npi$/i, /^pcp npi$/i, /^pcp npi number$/i]
+    };
+
+    (client.CustomFields || []).forEach(field => {
+        const text = String(field.Text || '').trim();
+        const key = Object.keys(matchers).find(k => matchers[k].some(pattern => pattern.test(text)));
+        if (!key || !field.FieldId) return;
+        result[key] = field.Value == null ? '' : String(field.Value);
+        result.fieldIds[key] = field.FieldId;
+    });
+
+    return result;
+}
+
 // === Feature #6: Upload Auth PDF to IntakeQ EMR ===
 window.uploadAuthToIntakeq = async (authId) => {
     if (!confirm("This will upload the generated Auth PDF to the matching client's IntakeQ file gallery. Proceed?")) return;
 
     try {
         const res = await fetch(`${API_BASE}/intakeq/upload-auth/${authId}`, { method: 'POST' });
-        const result = await res.json();
+        const raw = await res.text();
+        let result = {};
+        try { result = raw ? JSON.parse(raw) : {}; } catch { result = { raw }; }
 
         if (res.ok && result.success) {
             alert(`✓ ${result.message}`);
+        } else if (res.ok) {
+            alert(`✓ Uploaded (server returned non-standard body).`);
+            console.warn("IntakeQ upload raw body:", raw);
         } else {
-            alert("Error: " + (result.error || "Upload failed."));
+            alert("Error: " + (result.error || `Upload failed (HTTP ${res.status}).`));
         }
     } catch (err) {
         console.error("IntakeQ upload error:", err);
@@ -396,6 +680,7 @@ document.getElementById('client-form').addEventListener('submit', async (e) => {
         dob: document.getElementById('c_dob').value,
         medicaid_id: document.getElementById('c_medicaid_id').value,
         mco_id: document.getElementById('c_mco_id').value,
+        primary_care_provider_id: document.getElementById('c_pcp_existing')?.value || null,
         pcp: document.getElementById('c_pcp').value,
         pcp_phone: document.getElementById('c_pcp_phone').value,
         pcp_npi: document.getElementById('c_pcp_npi').value,
@@ -406,7 +691,12 @@ document.getElementById('client-form').addEventListener('submit', async (e) => {
         insurer: document.getElementById('c_insurer').value,
         medicare_a: document.getElementById('c_medicare_a').checked,
         medicare_b: document.getElementById('c_medicare_b').checked,
-        intakeq_client_id: (document.getElementById('c_intakeq_client_id')?.value || currentClient?.intakeq_client_id || null)
+        intakeq_client_id: (document.getElementById('c_intakeq_client_id')?.value || currentClient?.intakeq_client_id || null),
+        pcp_custom_field_ids: {
+            pcp: document.getElementById('c_intakeq_pcp_field_id')?.value || '',
+            pcp_phone: document.getElementById('c_intakeq_pcp_phone_field_id')?.value || '',
+            pcp_npi: document.getElementById('c_intakeq_pcp_npi_field_id')?.value || ''
+        }
     };
 
     const id = document.getElementById('client_id').value;
@@ -422,6 +712,9 @@ document.getElementById('client-form').addEventListener('submit', async (e) => {
 
         const result = await res.json();
         if (res.ok) {
+            if (result.intakeq_pcp_sync && result.intakeq_pcp_sync.success === false) {
+                alert("Client saved locally, but IntakeQ PCP sync failed: " + result.intakeq_pcp_sync.error);
+            }
             await loadClients();
             if (!id) {
                 viewClient(result.id);
@@ -447,9 +740,37 @@ window.editClient = (id) => {
     document.getElementById('c_dob').value = client.dob || '';
     document.getElementById('c_medicaid_id').value = client.medicaid_id || '';
     document.getElementById('c_mco_id').value = client.mco_id || '';
+    document.getElementById('c_pcp').value = client.pcp || '';
+    document.getElementById('c_pcp_phone').value = client.pcp_phone || '';
+    document.getElementById('c_pcp_npi').value = client.pcp_npi || '';
+    document.getElementById('c_pregnant').value = client.pregnant || '';
+    document.getElementById('c_work_injury').value = client.work_injury || 'no';
+    document.getElementById('c_mva').value = client.mva || 'no';
+    document.getElementById('c_other_insurance').value = client.other_insurance || 'no';
+    document.getElementById('c_insurer').value = client.insurer || '';
+    document.getElementById('c_medicare_a').checked = client.medicare_a == 1;
+    document.getElementById('c_medicare_b').checked = client.medicare_b == 1;
+    populateClientPcpSelect(client.primary_care_provider_id || '');
+
+    let hiddenIqId = document.getElementById('c_intakeq_client_id');
+    if (!hiddenIqId) {
+        hiddenIqId = document.createElement('input');
+        hiddenIqId.type = 'hidden';
+        hiddenIqId.id = 'c_intakeq_client_id';
+        document.getElementById('client-form').appendChild(hiddenIqId);
+    }
+    hiddenIqId.value = client.intakeq_client_id || '';
+    ['c_intakeq_pcp_field_id', 'c_intakeq_pcp_phone_field_id', 'c_intakeq_pcp_npi_field_id'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
+    clearPcpMatchStatus();
 
     document.getElementById('client-form-title').innerText = 'Edit Client';
-    switchView('client-form');
+    ensurePcpDirectoryLoaded().then(() => {
+        populateClientPcpSelect(client.primary_care_provider_id || '');
+        switchView('client-form');
+    });
 };
 
 // Delete Client
@@ -510,12 +831,13 @@ document.getElementById('btn-edit-client').addEventListener('click', () => {
     document.getElementById('c_pcp_phone').value = currentClient.pcp_phone || '';
     document.getElementById('c_pcp_npi').value = currentClient.pcp_npi || '';
     document.getElementById('c_pregnant').value = currentClient.pregnant || '';
-    document.getElementById('c_work_injury').value = currentClient.work_injury || '';
-    document.getElementById('c_mva').value = currentClient.mva || '';
-    document.getElementById('c_other_insurance').value = currentClient.other_insurance || '';
+    document.getElementById('c_work_injury').value = currentClient.work_injury || 'no';
+    document.getElementById('c_mva').value = currentClient.mva || 'no';
+    document.getElementById('c_other_insurance').value = currentClient.other_insurance || 'no';
     document.getElementById('c_insurer').value = currentClient.insurer || '';
     document.getElementById('c_medicare_a').checked = currentClient.medicare_a == 1;
     document.getElementById('c_medicare_b').checked = currentClient.medicare_b == 1;
+    populateClientPcpSelect(currentClient.primary_care_provider_id || '');
 
     // Populate hidden IntakeQ client ID field so it persists on re-save
     let hiddenIqId = document.getElementById('c_intakeq_client_id');
@@ -526,8 +848,16 @@ document.getElementById('btn-edit-client').addEventListener('click', () => {
         document.getElementById('client-form').appendChild(hiddenIqId);
     }
     hiddenIqId.value = currentClient.intakeq_client_id || '';
+    ['c_intakeq_pcp_field_id', 'c_intakeq_pcp_phone_field_id', 'c_intakeq_pcp_npi_field_id'].forEach(id => {
+        const input = document.getElementById(id);
+        if (input) input.value = '';
+    });
+    clearPcpMatchStatus();
 
-    switchView('client-form');
+    ensurePcpDirectoryLoaded().then(() => {
+        populateClientPcpSelect(currentClient.primary_care_provider_id || '');
+        switchView('client-form');
+    });
 });
 
 // --- Settings ---
@@ -764,9 +1094,175 @@ window.deleteFacility = async (id) => {
         const res = await fetch(`${API_BASE}/facilities/${id}`, { method: 'DELETE' });
         if (res.ok) {
             await loadFacilities();
+        } else {
+            const result = await res.json();
+            alert("Error: " + (result.error || "Failed to delete facility"));
         }
     } catch (err) {
         console.error("Error deleting facility", err);
+    }
+};
+
+// --- PCP Directory ---
+async function loadPcpDirectory() {
+    try {
+        const res = await fetch(`${API_BASE}/pcp-directory`);
+        pcpDirectory = await res.json();
+        renderPcpDirectoryTable(pcpDirectory);
+        populateClientPcpSelect(document.getElementById('c_pcp_existing')?.value || '');
+    } catch (err) {
+        console.error("Error loading PCP directory:", err);
+    }
+}
+
+async function loadPcpAssignableClients() {
+    try {
+        const res = await fetch(`${API_BASE}/pcp-directory/clients`);
+        const clientsForAssignment = await res.json();
+        const select = document.getElementById('pcp_assign_client');
+        if (!select) return;
+        select.innerHTML = '<option value="">Select client...</option>';
+        clientsForAssignment.forEach(client => {
+            const option = document.createElement('option');
+            option.value = client.id;
+            option.textContent = `${client.name}${client.dob ? ' | DOB ' + client.dob : ''}`;
+            select.appendChild(option);
+        });
+    } catch (err) {
+        console.error("Error loading clients for PCP assignment:", err);
+    }
+}
+
+function renderPcpDirectoryTable(data) {
+    const tbody = document.querySelector('#pcp-directory-table tbody');
+    if (!tbody) return;
+    tbody.innerHTML = '';
+
+    if (!Array.isArray(data) || data.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No PCP records found. Add one to get started.</td></tr>';
+        return;
+    }
+
+    data.forEach(pcp => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+            <td style="font-weight:600;">${pcp.name}</td>
+            <td>${pcp.phone || '--'}</td>
+            <td>${pcp.npi || '--'}</td>
+            <td>${pcp.client_count || 0}</td>
+            <td>
+                <div style="display:flex; gap:4px;">
+                    <button class="btn btn-ghost" title="Edit" onclick="editPcp(${pcp.id})"><i class="ph ph-pencil-simple"></i></button>
+                    <button class="btn btn-ghost" title="Delete" style="color:var(--danger);" onclick="deletePcp(${pcp.id})"><i class="ph ph-trash"></i></button>
+                </div>
+            </td>
+        `;
+        tbody.appendChild(tr);
+    });
+}
+
+document.getElementById('btn-add-pcp').addEventListener('click', () => {
+    document.getElementById('pcp-form').reset();
+    document.getElementById('pcp_id').value = '';
+    document.getElementById('pcp-form-title').innerText = 'New PCP';
+    loadPcpAssignableClients();
+    switchView('pcp-form');
+});
+
+document.getElementById('pcp-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+
+    const pcpData = {
+        name: document.getElementById('pcp_name').value.trim(),
+        phone: document.getElementById('pcp_phone').value.trim(),
+        npi: document.getElementById('pcp_npi').value.trim()
+    };
+
+    if (!pcpData.name || !pcpData.phone || !pcpData.npi) {
+        alert("PCP name, phone, and NPI are required.");
+        return;
+    }
+
+    const id = document.getElementById('pcp_id').value;
+    const method = id ? 'PUT' : 'POST';
+    const url = id ? `${API_BASE}/pcp-directory/${id}` : `${API_BASE}/pcp-directory`;
+
+    try {
+        const res = await fetch(url, {
+            method,
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(pcpData)
+        });
+        const result = await res.json();
+        if (res.ok) {
+            await loadPcpDirectory();
+            await loadClients();
+            switchView('pcp-directory');
+        } else {
+            alert("Error: " + (result.error || "Failed to save PCP"));
+        }
+    } catch (err) {
+        console.error("Error saving PCP:", err);
+        alert("Network error saving PCP.");
+    }
+});
+
+window.editPcp = (id) => {
+    const pcp = pcpDirectory.find(item => item.id === id);
+    if (!pcp) return;
+
+    document.getElementById('pcp-form-title').innerText = 'Edit PCP';
+    document.getElementById('pcp_id').value = pcp.id;
+    document.getElementById('pcp_name').value = pcp.name || '';
+    document.getElementById('pcp_phone').value = pcp.phone || '';
+    document.getElementById('pcp_npi').value = pcp.npi || '';
+    loadPcpAssignableClients();
+    switchView('pcp-form');
+};
+
+document.getElementById('btn-assign-pcp-client').addEventListener('click', async () => {
+    const pcpId = document.getElementById('pcp_id').value;
+    const clientId = document.getElementById('pcp_assign_client').value;
+
+    if (!pcpId) {
+        alert("Save this PCP before assigning clients.");
+        return;
+    }
+    if (!clientId) {
+        alert("Select a client to assign.");
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/pcp-directory/${pcpId}/clients/${clientId}`, { method: 'PUT' });
+        const result = await res.json();
+        if (res.ok) {
+            await loadPcpDirectory();
+            await loadClients();
+            await loadPcpAssignableClients();
+            alert("Client assigned to PCP.");
+        } else {
+            alert("Error: " + (result.error || "Failed to assign client"));
+        }
+    } catch (err) {
+        console.error("Error assigning client to PCP:", err);
+        alert("Network error assigning client.");
+    }
+});
+
+window.deletePcp = async (id) => {
+    if (!confirm("Are you sure you want to delete this PCP?")) return;
+    try {
+        const res = await fetch(`${API_BASE}/pcp-directory/${id}`, { method: 'DELETE' });
+        const result = await res.json();
+        if (res.ok) {
+            await loadPcpDirectory();
+        } else {
+            alert("Error: " + (result.error || "Failed to delete PCP"));
+        }
+    } catch (err) {
+        console.error("Error deleting PCP:", err);
+        alert("Network error deleting PCP.");
     }
 };
 
@@ -830,7 +1326,21 @@ document.getElementById('btn-new-auth').addEventListener('click', async () => {
     renderFileList();
 
     switchView('generate-auth');
+    resetAuthStepQueue();
 });
+
+function isImmutableAuth(item) {
+    return item && Boolean(item.intakeq_uploaded_at);
+}
+
+async function readErrorMessage(res) {
+    try {
+        const body = await res.json();
+        return body.error || `Server responded with ${res.status}`;
+    } catch {
+        return `Server responded with ${res.status}`;
+    }
+}
 
 // Auth History
 async function loadAuthHistory(clientId) {
@@ -863,6 +1373,7 @@ async function loadAuthHistory(clientId) {
             } catch (e) {
                 console.error("Error parsing form_data for auth", item.id, e);
             }
+            const immutable = isImmutableAuth(item);
 
             const formatDateShort = (dateStr) => {
                 if (!dateStr || dateStr === 'Unknown') return '??-??-??';
@@ -901,7 +1412,7 @@ async function loadAuthHistory(clientId) {
             } else if (item.fax_status === 'Sent' || item.fax_status === 'Success') {
                 badgeHtml = '<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;margin-left:8px;">✓ Faxed</span>' + clinicalBadgeHtml;
                 pendingFaxesToPoll.delete(item.id);
-            } else if (item.fax_status === 'In Progress') {
+            } else if (isPollableFaxStatus(item.fax_status)) {
                 badgeHtml = '<span style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;margin-left:8px;"><i class="ph ph-spinner ph-spin pulse-glow"></i> Polling</span>' + clinicalBadgeHtml;
                 pendingFaxesToPoll.add(item.id);
             } else if (item.fax_status === 'Failed' || item.fax_status?.includes('Error')) {
@@ -946,11 +1457,11 @@ async function loadAuthHistory(clientId) {
                             <button class="btn btn-ghost" onclick="previewAuth(${item.id})"><i class="ph ph-eye"></i> Preview</button>
                             ${faxBtn}${refreshBtn}
                             ${uploadIntakeqBtn}
-                            ${(item.fax_status === 'Sent' || item.fax_status === 'Success') 
+                            ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
                                 ? `<button class="btn btn-ghost" onclick="copyAuth(${item.id})"><i class="ph ph-copy"></i> Copy</button>`
                                 : `<button class="btn btn-ghost" onclick="editAuth(${item.id})"><i class="ph ph-pencil-simple"></i> Edit</button>`
                             }
-                            ${(item.fax_status === 'Sent' || item.fax_status === 'Success') 
+                            ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
                                 ? '' 
                                 : `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})"><i class="ph ph-trash"></i></button>`
                             }
@@ -975,11 +1486,11 @@ async function loadAuthHistory(clientId) {
                             <button class="btn btn-ghost" onclick="previewAuth(${item.id})" title="Preview"><i class="ph ph-eye"></i></button>
                             ${faxBtn ? `<span title="Fax">${faxBtn}</span>` : ''}
                             ${uploadIntakeqBtn ? `<span title="Upload to IntakeQ">${uploadIntakeqBtn}</span>` : ''}
-                            ${(item.fax_status === 'Sent' || item.fax_status === 'Success') 
+                            ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
                                 ? `<button class="btn btn-ghost" onclick="copyAuth(${item.id})" title="Copy"><i class="ph ph-copy"></i></button>`
                                 : `<button class="btn btn-ghost" onclick="editAuth(${item.id})" title="Edit"><i class="ph ph-pencil-simple"></i></button>`
                             }
-                            ${(item.fax_status === 'Sent' || item.fax_status === 'Success') 
+                            ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
                                 ? '' 
                                 : `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})" title="Delete"><i class="ph ph-trash"></i></button>`
                             }
@@ -1045,6 +1556,8 @@ async function autoSaveDraft() {
                 setTimeout(() => { 
                     if (draftStatus.innerText === 'Draft saved') draftStatus.innerText = ''; 
                 }, 3000);
+            } else if (res.status === 409) {
+                if (draftStatus) draftStatus.innerText = result.error || 'Immutable - copy to edit';
             }
         } catch (err) {
             console.error("Auto-save failed:", err);
@@ -1056,6 +1569,21 @@ async function autoSaveDraft() {
 // Attach Auto-Save Listeners
 document.getElementById('auth-generate-form').addEventListener('input', autoSaveDraft);
 document.getElementById('auth-generate-form').addEventListener('change', autoSaveDraft);
+
+document.getElementById('btn-auth-next-attachments')?.addEventListener('click', () => {
+    const form = document.getElementById('auth-generate-form');
+    if (!form.checkValidity()) {
+        setAuthStep('tab-form');
+        setAuthFlowError('Finish required form data before moving to attachments.');
+        setTimeout(() => form.reportValidity(), 50);
+        return;
+    }
+    setAuthStep('tab-attachments');
+});
+
+document.getElementById('btn-auth-next-actions')?.addEventListener('click', () => {
+    if (requireAuthStep('tab-actions')) setAuthStep('tab-actions');
+});
 
 document.getElementById('btn-save-draft').addEventListener('click', async () => {
     clearTimeout(authAutoSaveTimeout);
@@ -1097,7 +1625,7 @@ document.getElementById('btn-save-draft').addEventListener('click', async () => 
             body: JSON.stringify(payload)
         });
 
-        if (!res.ok) throw new Error("Failed to save draft");
+        if (!res.ok) throw new Error(await readErrorMessage(res));
         
         const result = await res.json();
         if (result.id && (!authIdInput || !authIdInput.value)) {
@@ -1122,7 +1650,7 @@ document.getElementById('btn-save-draft').addEventListener('click', async () => 
     } catch (err) {
         console.error("Save failed:", err);
         if (draftStatus) draftStatus.innerText = 'Save failed';
-        alert("Failed to save record. See console for details.");
+        alert(err.message || "Failed to save record. See console for details.");
     }
 });
 
@@ -1159,6 +1687,8 @@ window.deleteAuth = async (id) => {
         const res = await fetch(`${API_BASE}/auth-requests/${id}`, { method: 'DELETE' });
         if (res.ok && currentClient) {
             loadAuthHistory(currentClient.id);
+        } else if (!res.ok) {
+            alert(await readErrorMessage(res));
         }
     } catch (err) {
         console.error("Error deleting auth history", err);
@@ -1250,15 +1780,17 @@ window.copyAuth = async (id) => {
         document.getElementById('auth-generate-form').reset();
 
         const data = JSON.parse(auth.form_data);
-        
-        // Ensure no ID is set so it saves as a NEW record
-        let authIdInput = document.getElementById('auth_id_input');
-        if (authIdInput) authIdInput.value = '';
+        delete data.auth_id;
         
         const recNumSpan = document.getElementById('gen_record_number');
         if (recNumSpan) recNumSpan.innerText = '(New Copy)';
 
         populateAuthForm(data);
+
+        // Ensure no ID is set so it saves as a NEW record. This must run after
+        // populateAuthForm because older saved form_data may include auth_id.
+        let authIdInput = document.getElementById('auth_id_input');
+        if (authIdInput) authIdInput.value = '';
 
         uploadedFiles = [];
         renderFileList();
@@ -1274,6 +1806,11 @@ window.editAuth = async (id) => {
     try {
         const res = await fetch(`${API_BASE}/auth-requests/${id}`);
         const auth = await res.json();
+
+        if (isImmutableAuth(auth)) {
+            alert("This authorization is immutable. Use Copy to create a new editable authorization.");
+            return;
+        }
 
         if (!currentClient || currentClient.id !== auth.client_id) {
             await window.viewClient(auth.client_id);
@@ -1544,6 +2081,11 @@ document.getElementById('btn-load-intakeq-files').addEventListener('click', asyn
 
 // --- Submit Generation Request ---
 document.getElementById('btn-generate-pdf').addEventListener('click', async () => {
+    if (!requireAuthStep('tab-actions') || !authStepQueue.has('tab-actions')) {
+        setAuthFlowError('Generate the PDF from step 3 after reviewing attachments and actions/history.');
+        return;
+    }
+
     const form = document.getElementById('auth-generate-form');
     if (!form.checkValidity()) {
         // Switch to the form tab to show the browser's validation bubble
@@ -1620,7 +2162,9 @@ document.getElementById('btn-generate-pdf').addEventListener('click', async () =
             body: submitFormData
         });
 
-        if (!res.ok) throw new Error(`Server responded with ${res.status}`);
+        if (!res.ok) throw new Error(await readErrorMessage(res));
+
+        const generatedAuthId = res.headers.get('X-Auth-Request-Id') || document.getElementById('auth_id_input')?.value || '';
 
         // Trigger download
         const blob = await res.blob();
@@ -1642,12 +2186,11 @@ document.getElementById('btn-generate-pdf').addEventListener('click', async () =
         a.click();
         window.URL.revokeObjectURL(url);
 
-        // Return to client details after generation
-        switchView('client-details');
+        markAuthGenerated(generatedAuthId);
 
         // Reset auto-save auth ID
         const draftStatus = document.getElementById('draft-status');
-        if (draftStatus) draftStatus.innerText = '';
+        if (draftStatus) draftStatus.innerText = 'PDF generated';
 
         // Reload authorization history to show newly created one
         loadAuthHistory(currentClient.id);
@@ -1733,11 +2276,25 @@ window.deleteMcoEntry = async (id) => {
 };
 
 // === Fax Layer & Send Logic ===
+function showFaxLayer() {
+    const layer = document.getElementById('inline-fax-layer');
+    layer.style.display = 'flex';
+    layer.classList.add('active');
+}
+
+function hideFaxLayer() {
+    const layer = document.getElementById('inline-fax-layer');
+    layer.classList.remove('active');
+    layer.style.display = 'none';
+}
+
 document.getElementById('btn-send-fax').addEventListener('click', async () => {
+    if (!requireAuthStep('tab-actions') || !requireGeneratedPdfForFax()) return;
+
     // If we're on the Actions tab, we can open the fax layer
     const layer = document.getElementById('inline-fax-layer');
-    if (layer.style.display === 'block') {
-        layer.style.display = 'none';
+    if (layer.classList.contains('active')) {
+        hideFaxLayer();
         return;
     }
 
@@ -1796,7 +2353,7 @@ document.getElementById('btn-send-fax').addEventListener('click', async () => {
         }
     } catch(e) {}
 
-    layer.style.display = 'block';
+    showFaxLayer();
 });
 
 // We keep this for the "Fax" button in the Past Authorizations table row.
@@ -1846,14 +2403,11 @@ window.openFaxModal = async (authId) => {
         }
     } catch (e) { /* ignore */ }
 
-    layer.style.display = 'block';
-    
-    // Scroll layer into view
-    layer.scrollIntoView({ behavior: 'smooth', block: 'end' });
+    showFaxLayer();
 };
 
 document.getElementById('btn-close-fax-layer').addEventListener('click', () => {
-    document.getElementById('inline-fax-layer').style.display = 'none';
+    hideFaxLayer();
     pendingFaxAuthId = null;
 });
 
@@ -1884,7 +2438,11 @@ document.getElementById('fax-layer-send').addEventListener('click', async () => 
 
         if (res.ok && result.success) {
             alert('Fax queued successfully! SRFax ID: ' + result.faxDetailsId);
-            document.getElementById('inline-fax-layer').style.display = 'none';
+            hideFaxLayer();
+            authStepQueue.add('send-fax');
+            document.getElementById('auth-fax-step')?.classList.add('completed');
+            pendingFaxesToPoll.add(pendingFaxAuthId);
+            pollPendingFaxStatuses();
             pendingFaxAuthId = null;
             if (currentClient) loadAuthHistory(currentClient.id);
         } else {
@@ -1902,55 +2460,66 @@ document.getElementById('fax-layer-send').addEventListener('click', async () => 
 
 // === Background Fax Polling ===
 let faxPollInterval = null;
-function startFaxPolling() {
-    if (faxPollInterval) clearInterval(faxPollInterval);
-    // Poll every 60 seconds
-    faxPollInterval = setInterval(async () => {
-        if (pendingFaxesToPoll.size === 0) return;
-        
-        // Visual Cue: Show Global Indicator
-        const syncIndicator = document.getElementById('sync-indicator');
-        if (syncIndicator) {
-            syncIndicator.style.display = 'flex';
-            setTimeout(() => { if (syncIndicator) syncIndicator.style.display = 'none'; }, 5000);
-        }
+async function pollPendingFaxStatuses() {
+    if (pendingFaxesToPoll.size === 0) {
+        setFaxPollingIndicator('hidden');
+        return;
+    }
 
-        let needsRefresh = false;
-        for (let authId of pendingFaxesToPoll) {
-             try {
-                 const res = await fetch(`${API_BASE}/check-fax-status/${authId}`, { method: 'POST' });
-                 if (res.ok) {
-                     const contentType = res.headers.get("content-type");
-                     if (contentType && contentType.indexOf("application/json") !== -1) {
-                         const result = await res.json();
-                         if (result.success && result.faxStatus !== 'In Progress' && result.faxStatus !== 'Unknown') {
-                             needsRefresh = true;
-                         }
+    setFaxPollingIndicator('checking');
+
+    let needsRefresh = false;
+    let confirmedSent = false;
+    for (let authId of Array.from(pendingFaxesToPoll)) {
+         try {
+             const res = await fetch(`${API_BASE}/check-fax-status/${authId}`, { method: 'POST' });
+             if (res.ok) {
+                 const contentType = res.headers.get("content-type");
+                 if (contentType && contentType.indexOf("application/json") !== -1) {
+                     const result = await res.json();
+                     if (result.success && !isPollableFaxStatus(result.faxStatus) && result.faxStatus !== 'Unknown') {
+                         pendingFaxesToPoll.delete(authId);
+                         confirmedSent = result.faxStatus === 'Sent' || result.faxStatus === 'Success';
+                         needsRefresh = true;
                      }
                  }
-             } catch(e) { 
-                 console.error(`Background poll error for auth ${authId}:`, e);
              }
-        }
-        
-        // Reset spinners
-        setTimeout(() => {
-            document.querySelectorAll('.ph-spinner').forEach(s => s.style.textShadow = 'none');
-        }, 2000);
+         } catch(e) { 
+             console.error(`Background poll error for auth ${authId}:`, e);
+         }
+    }
 
-        if (needsRefresh) {
-            if (currentClient && document.getElementById('tab-actions').classList.contains('active')) {
-                loadAuthHistory(currentClient.id);
-            }
-            if (document.getElementById('tab-fax-log') && document.getElementById('tab-fax-log').classList.contains('active')) {
-                loadFaxLog();
-            }
-            // Also refresh if the global fax log view is active
-            if (document.getElementById('view-fax-log').classList.contains('active')) {
-                loadFaxLog();
-            }
+    if (confirmedSent) {
+        setFaxPollingIndicator('sent');
+    } else {
+        setFaxPollingIndicator('hidden');
+    }
+    
+    // Reset spinners
+    setTimeout(() => {
+        document.querySelectorAll('.ph-spinner').forEach(s => s.style.textShadow = 'none');
+    }, 2000);
+
+    if (needsRefresh) {
+        if (currentClient && document.getElementById('tab-actions').classList.contains('active')) {
+            loadAuthHistory(currentClient.id);
         }
-    }, 60000);
+        if (document.getElementById('tab-fax-log') && document.getElementById('tab-fax-log').classList.contains('active')) {
+            loadFaxLog();
+        }
+        // Also refresh if the global fax log view is active
+        if (document.getElementById('view-fax-log').classList.contains('active')) {
+            loadFaxLog();
+        }
+    }
+}
+
+function startFaxPolling() {
+    if (faxPollInterval) clearInterval(faxPollInterval);
+    // Poll every 2 minutes
+    faxPollInterval = setInterval(async () => {
+        await pollPendingFaxStatuses();
+    }, 120000);
 }
 
 window.refreshFaxStatus = async (authId) => {

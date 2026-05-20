@@ -9,9 +9,193 @@ const fs = require('fs');
 
 const db = require('./db');
 const { sendFax, checkFaxStatus } = require('./srfax');
+const intakeq = require('./intakeq');
+const {
+    createErrorLogger,
+    createRequestTracer,
+    installProcessErrorLogging,
+    DEFAULT_LOG_FILE
+} = require('./tracing');
 
 const app = express();
 const port = 3000;
+
+const CLIENT_SELECT = `
+    SELECT
+        c.id, c.name, c.medicaid_id, c.mco_id, c.dob, c.pregnant,
+        COALESCE(p.name, c.pcp) AS pcp,
+        COALESCE(p.phone, c.pcp_phone) AS pcp_phone,
+        COALESCE(p.npi, c.pcp_npi) AS pcp_npi,
+        c.work_injury, c.mva, c.other_insurance, c.insurer,
+        c.medicare_a, c.medicare_b, c.intakeq_client_id,
+        c.primary_care_provider_id
+    FROM clients c
+    LEFT JOIN primary_care_providers p ON p.id = c.primary_care_provider_id
+`;
+
+function requireField(value, label) {
+    if (!String(value || '').trim()) {
+        return `${label} is required`;
+    }
+    return null;
+}
+
+function phoneFaxError(value, label) {
+    if (!String(value || '').trim()) return null;
+    const digits = String(value).replace(/\D/g, '');
+    if (digits.length === 10) return null;
+    if (digits.length === 11 && digits.startsWith('1')) return null;
+    return `${label} must be a 10-digit US number or 11 digits starting with 1.`;
+}
+
+function normalizePhoneFax(value) {
+    if (!String(value || '').trim()) return value || '';
+    const digits = String(value).replace(/\D/g, '');
+    const normalized = digits.length === 10 ? `1${digits}` : digits;
+    if (normalized.length !== 11 || !normalized.startsWith('1')) return String(value).trim();
+    return `1 (${normalized.slice(1, 4)}) ${normalized.slice(4, 7)}-${normalized.slice(7)}`;
+}
+
+function toSrfaxCallerId(value) {
+    const digits = String(value || '').replace(/\D/g, '');
+    return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
+}
+
+function toDialableFaxNumber(value) {
+    const digits = String(value || '').replace(/\D/g, '');
+    return digits.length === 10 ? `1${digits}` : digits;
+}
+
+function normalizeClientInsuranceIds(data) {
+    const copy = Object.assign({}, data);
+    let medicaidId = String(copy.medicaid_id || '').trim();
+    let mcoId = String(copy.mco_id || '').trim();
+
+    if (medicaidId && mcoId && medicaidId === mcoId) {
+        if (/^(00|000)/.test(medicaidId)) {
+            mcoId = '';
+        } else {
+            medicaidId = '';
+        }
+    }
+
+    if (!medicaidId && /^(00|000)/.test(mcoId)) {
+        medicaidId = mcoId;
+        mcoId = '';
+    }
+
+    if (!mcoId && medicaidId && !/^(00|000)/.test(medicaidId)) {
+        mcoId = medicaidId;
+        medicaidId = '';
+    }
+
+    copy.medicaid_id = medicaidId;
+    copy.mco_id = mcoId;
+    return copy;
+}
+
+function validatePhoneFaxFields(data, fields) {
+    for (const [key, label] of fields) {
+        const err = phoneFaxError(data[key], label);
+        if (err) return err;
+    }
+    return null;
+}
+
+function normalizePhoneFaxFields(data, fields) {
+    const copy = Object.assign({}, data);
+    for (const key of fields) {
+        copy[key] = normalizePhoneFax(copy[key]);
+    }
+    return copy;
+}
+
+function validateClientData(data) {
+    if (data.primary_care_provider_id) return requireField(data.name, 'Client Name');
+    return (
+        requireField(data.name, 'Client Name') ||
+        requireField(data.pcp, 'PCP name') ||
+        requireField(data.pcp_phone, 'PCP phone') ||
+        requireField(data.pcp_npi, 'PCP NPI') ||
+        phoneFaxError(data.pcp_phone, 'PCP phone')
+    );
+}
+
+function runDb(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.run(sql, params, function (err) {
+            if (err) reject(err);
+            else resolve(this);
+        });
+    });
+}
+
+function getDb(sql, params = []) {
+    return new Promise((resolve, reject) => {
+        db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
+    });
+}
+
+const TERMINAL_FAX_STATUSES = new Set(['Sent', 'Success', 'Failed', 'Error']);
+
+function isImmutableAuthorization(auth) {
+    return auth && Boolean(auth.intakeq_uploaded_at);
+}
+
+function sendImmutableAuthorizationResponse(res) {
+    return res.status(409).json({
+        error: "Authorization is immutable. Copy the existing authorization to make changes."
+    });
+}
+
+function isTerminalFaxStatus(status) {
+    return TERMINAL_FAX_STATUSES.has(status) || String(status || '').includes('Error');
+}
+
+async function findOrCreatePrimaryCareProvider(data) {
+    if (data.primary_care_provider_id) {
+        const row = await getDb(
+            "SELECT id, name, phone, npi FROM primary_care_providers WHERE id = ?",
+            [data.primary_care_provider_id]
+        );
+        if (!row) {
+            const err = new Error("Selected PCP was not found.");
+            err.status = 400;
+            throw err;
+        }
+        return row;
+    }
+
+    const provider = {
+        name: String(data.pcp || '').trim(),
+        phone: normalizePhoneFax(data.pcp_phone),
+        npi: String(data.pcp_npi || '').trim()
+    };
+
+    await runDb(
+        "INSERT OR IGNORE INTO primary_care_providers (name, phone, npi) VALUES (?, ?, ?)",
+        [provider.name, provider.phone, provider.npi]
+    );
+
+    const row = await getDb(
+        "SELECT id FROM primary_care_providers WHERE name = ? AND phone = ? AND npi = ?",
+        [provider.name, provider.phone, provider.npi]
+    );
+
+    return { id: row.id, ...provider };
+}
+
+async function getIntakeqApiKey() {
+    const row = await getDb("SELECT intakeq_api_key FROM settings WHERE id = 1");
+    return row && row.intakeq_api_key ? row.intakeq_api_key : '';
+}
+
+async function syncPcpToIntakeq(data, provider) {
+    return {
+        skipped: true,
+        reason: 'PCP data is local-only; IntakeQ client writes are disabled for local saves.'
+    };
+}
 
 /**
  * Re-saves a PDF buffer through pdf-lib to normalize the format for SRFax compatibility.
@@ -35,6 +219,7 @@ function getNextRecordNumber() {
 // Middleware
 app.use(cors());
 app.use(express.json());
+app.use(createRequestTracer());
 app.use(express.static('public')); // serve frontend
 app.set('view engine', 'ejs');
 
@@ -57,70 +242,72 @@ if (!fs.existsSync('output')) fs.mkdirSync('output');
 
 // --- Clients ---
 app.get('/api/clients', (req, res) => {
-    db.all("SELECT * FROM clients", [], (err, rows) => {
+    db.all(`${CLIENT_SELECT} ORDER BY c.name`, [], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
 });
 
 app.get('/api/clients/:id', (req, res) => {
-    db.get("SELECT * FROM clients WHERE id = ?", [req.params.id], (err, row) => {
+    db.get(`${CLIENT_SELECT} WHERE c.id = ?`, [req.params.id], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
         if (!row) return res.status(404).json({ error: "Client not found" });
         res.json(row);
     });
 });
 
-app.post('/api/clients', (req, res) => {
-    const data = req.body;
-    if (!data.name) return res.status(400).json({ error: "Client Name is required" });
+app.post('/api/clients', async (req, res) => {
+    const data = normalizeClientInsuranceIds(req.body || {});
+    const validationError = validateClientData(data);
+    if (validationError) return res.status(400).json({ error: validationError });
 
-    const stmt = db.prepare(`
-        INSERT INTO clients (
-            name, medicaid_id, mco_id, dob, pregnant, pcp, pcp_phone, pcp_npi,
-            work_injury, mva, other_insurance, insurer, medicare_a, medicare_b, intakeq_client_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
-    stmt.run(
-        [
+    try {
+        const provider = await findOrCreatePrimaryCareProvider(data);
+        const result = await runDb(`
+            INSERT INTO clients (
+                name, medicaid_id, mco_id, dob, pregnant, pcp, pcp_phone, pcp_npi,
+                primary_care_provider_id,
+                work_injury, mva, other_insurance, insurer, medicare_a, medicare_b, intakeq_client_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `, [
             data.name, data.medicaid_id, data.mco_id, data.dob, data.pregnant,
-            data.pcp, data.pcp_phone, data.pcp_npi, data.work_injury, data.mva,
-            data.other_insurance, data.insurer, data.medicare_a, data.medicare_b,
-            data.intakeq_client_id || null
-        ],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ id: this.lastID });
-        }
-    );
-    stmt.finalize();
+            provider.name, provider.phone, provider.npi, provider.id,
+            data.work_injury, data.mva, data.other_insurance, data.insurer,
+            data.medicare_a, data.medicare_b, data.intakeq_client_id || null
+        ]);
+        const intakeqPcpSync = await syncPcpToIntakeq(data, provider);
+        res.json({ id: result.lastID, primary_care_provider_id: provider.id, intakeq_pcp_sync: intakeqPcpSync });
+    } catch (err) {
+        res.status(err.status || 500).json({ error: err.message });
+    }
 });
 
-app.put('/api/clients/:id', (req, res) => {
-    const data = req.body;
-    if (!data.name) return res.status(400).json({ error: "Client Name is required" });
+app.put('/api/clients/:id', async (req, res) => {
+    const data = normalizeClientInsuranceIds(req.body || {});
+    const validationError = validateClientData(data);
+    if (validationError) return res.status(400).json({ error: validationError });
 
-    const stmt = db.prepare(`
-        UPDATE clients SET
-            name=?, medicaid_id=?, mco_id=?, dob=?, pregnant=?, pcp=?, pcp_phone=?, pcp_npi=?,
-            work_injury=?, mva=?, other_insurance=?, insurer=?, medicare_a=?, medicare_b=?,
-            intakeq_client_id=COALESCE(?, intakeq_client_id)
-        WHERE id=?
-    `);
-    stmt.run(
-        [
+    try {
+        const provider = await findOrCreatePrimaryCareProvider(data);
+        const result = await runDb(`
+            UPDATE clients SET
+                name=?, medicaid_id=?, mco_id=?, dob=?, pregnant=?, pcp=?, pcp_phone=?, pcp_npi=?,
+                primary_care_provider_id=?,
+                work_injury=?, mva=?, other_insurance=?, insurer=?, medicare_a=?, medicare_b=?,
+                intakeq_client_id=COALESCE(?, intakeq_client_id)
+            WHERE id=?
+        `, [
             data.name, data.medicaid_id, data.mco_id, data.dob, data.pregnant,
-            data.pcp, data.pcp_phone, data.pcp_npi, data.work_injury, data.mva,
-            data.other_insurance, data.insurer, data.medicare_a, data.medicare_b,
-            data.intakeq_client_id || null,
+            provider.name, provider.phone, provider.npi, provider.id,
+            data.work_injury, data.mva, data.other_insurance, data.insurer,
+            data.medicare_a, data.medicare_b, data.intakeq_client_id || null,
             req.params.id
-        ],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ changes: this.changes });
-        }
-    );
-    stmt.finalize();
+        ]);
+        const intakeqPcpSync = await syncPcpToIntakeq(data, provider);
+        res.json({ changes: result.changes, primary_care_provider_id: provider.id, intakeq_pcp_sync: intakeqPcpSync });
+    } catch (err) {
+        res.status(err.status || 500).json({ error: err.message });
+    }
 });
 
 app.delete('/api/clients/:id', (req, res) => {
@@ -128,6 +315,156 @@ app.delete('/api/clients/:id', (req, res) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ changes: this.changes });
     });
+});
+
+// --- PCP Directory ---
+function validatePcpDirectoryData(data) {
+    return (
+        requireField(data.name, 'PCP name') ||
+        requireField(data.phone, 'PCP phone') ||
+        requireField(data.npi, 'PCP NPI') ||
+        phoneFaxError(data.phone, 'PCP phone')
+    );
+}
+
+function cleanPcpDirectoryData(data) {
+    return {
+        name: String(data.name || '').trim(),
+        phone: normalizePhoneFax(data.phone),
+        npi: String(data.npi || '').trim()
+    };
+}
+
+function logIntakeqCustomFieldLabels(clients) {
+    const seen = new Map();
+    for (const client of clients || []) {
+        for (const field of client.CustomFields || []) {
+            if (!field.FieldId || !field.Text) continue;
+            seen.set(field.FieldId, field.Text);
+        }
+    }
+    if (seen.size > 0) {
+        console.log('[IntakeQ CustomFields]', JSON.stringify(
+            Array.from(seen.entries()).map(([fieldId, text]) => ({ fieldId, text }))
+        ));
+    } else {
+        console.log('[IntakeQ CustomFields] No CustomFields returned in client-search response.');
+    }
+}
+
+app.get('/api/pcp-directory', (req, res) => {
+    db.all(`
+        SELECT
+            p.id,
+            p.name,
+            p.phone,
+            p.npi,
+            COUNT(c.id) AS client_count
+        FROM primary_care_providers p
+        LEFT JOIN clients c ON c.primary_care_provider_id = p.id
+        GROUP BY p.id
+        ORDER BY p.name
+    `, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.get('/api/pcp-directory/clients', (req, res) => {
+    db.all(`
+        SELECT
+            id,
+            name,
+            medicaid_id,
+            dob,
+            primary_care_provider_id
+        FROM clients
+        ORDER BY name
+    `, [], (err, rows) => {
+        if (err) return res.status(500).json({ error: err.message });
+        res.json(rows);
+    });
+});
+
+app.post('/api/pcp-directory', async (req, res) => {
+    const validationError = validatePcpDirectoryData(req.body || {});
+    if (validationError) return res.status(400).json({ error: validationError });
+
+    const data = cleanPcpDirectoryData(req.body);
+    try {
+        const result = await runDb(
+            "INSERT INTO primary_care_providers (name, phone, npi) VALUES (?, ?, ?)",
+            [data.name, data.phone, data.npi]
+        );
+        res.json({ id: result.lastID });
+    } catch (err) {
+        if (err.code === 'SQLITE_CONSTRAINT') {
+            return res.status(409).json({ error: "A PCP with this name, phone, and NPI already exists." });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/pcp-directory/:id', async (req, res) => {
+    const validationError = validatePcpDirectoryData(req.body || {});
+    if (validationError) return res.status(400).json({ error: validationError });
+
+    const data = cleanPcpDirectoryData(req.body);
+    try {
+        const result = await runDb(
+            "UPDATE primary_care_providers SET name = ?, phone = ?, npi = ? WHERE id = ?",
+            [data.name, data.phone, data.npi, req.params.id]
+        );
+        await runDb(
+            "UPDATE clients SET pcp = ?, pcp_phone = ?, pcp_npi = ? WHERE primary_care_provider_id = ?",
+            [data.name, data.phone, data.npi, req.params.id]
+        );
+        res.json({ changes: result.changes });
+    } catch (err) {
+        if (err.code === 'SQLITE_CONSTRAINT') {
+            return res.status(409).json({ error: "A PCP with this name, phone, and NPI already exists." });
+        }
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.delete('/api/pcp-directory/:id', async (req, res) => {
+    try {
+        const usage = await getDb(
+            "SELECT COUNT(*) AS count FROM clients WHERE primary_care_provider_id = ?",
+            [req.params.id]
+        );
+        if (usage.count > 0) {
+            const label = usage.count === 1 ? 'client' : 'clients';
+            return res.status(409).json({ error: `This PCP is assigned to ${usage.count} ${label}. Reassign those clients before deleting it.` });
+        }
+
+        const result = await runDb("DELETE FROM primary_care_providers WHERE id = ?", [req.params.id]);
+        res.json({ changes: result.changes });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
+app.put('/api/pcp-directory/:pcpId/clients/:clientId', async (req, res) => {
+    try {
+        const provider = await getDb(
+            "SELECT id, name, phone, npi FROM primary_care_providers WHERE id = ?",
+            [req.params.pcpId]
+        );
+        if (!provider) return res.status(404).json({ error: "PCP not found" });
+
+        const result = await runDb(`
+            UPDATE clients
+            SET primary_care_provider_id = ?, pcp = ?, pcp_phone = ?, pcp_npi = ?
+            WHERE id = ?
+        `, [provider.id, provider.name, provider.phone, provider.npi, req.params.clientId]);
+
+        if (result.changes === 0) return res.status(404).json({ error: "Client not found" });
+        res.json({ changes: result.changes });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- Settings ---
@@ -139,15 +476,22 @@ app.get('/api/settings', (req, res) => {
 });
 
 app.put('/api/settings', (req, res) => {
-    const data = req.body;
+    const data = normalizePhoneFaxFields(req.body || {}, [
+        'req_provider_phone',
+        'req_provider_fax',
+        'completed_by_phone',
+        'srfax_caller_id'
+    ]);
     
     // Basic validation
     if (!data.requesting_provider) return res.status(400).json({ error: "Requesting Provider Name is required" });
-    
-    // SRFax Validation
-    if (data.srfax_caller_id && data.srfax_caller_id.replace(/\D/g, '').length !== 10) {
-        return res.status(400).json({ error: "SRFax Caller ID must be exactly 10 digits (no country code)." });
-    }
+    const validationError = validatePhoneFaxFields(data, [
+        ['req_provider_phone', 'Requesting provider phone'],
+        ['req_provider_fax', 'Requesting provider fax'],
+        ['completed_by_phone', 'Completed by phone'],
+        ['srfax_caller_id', 'SRFax Caller ID']
+    ]);
+    if (validationError) return res.status(400).json({ error: validationError });
 
     const stmt = db.prepare(`
         UPDATE settings SET
@@ -181,8 +525,20 @@ app.get('/api/facilities', (req, res) => {
 });
 
 app.post('/api/facilities', (req, res) => {
-    const data = req.body;
+    const data = normalizePhoneFaxFields(req.body || {}, [
+        'req_provider_phone',
+        'req_provider_fax',
+        'serv_provider_phone',
+        'serv_provider_fax'
+    ]);
     if (!data.name) return res.status(400).json({ error: "Provider Preset Name is required" });
+    const validationError = validatePhoneFaxFields(data, [
+        ['req_provider_phone', 'Requesting provider phone'],
+        ['req_provider_fax', 'Requesting provider fax'],
+        ['serv_provider_phone', 'Servicing provider phone'],
+        ['serv_provider_fax', 'Servicing provider fax']
+    ]);
+    if (validationError) return res.status(400).json({ error: validationError });
 
     const stmt = db.prepare(`
         INSERT INTO provider_presets (
@@ -208,8 +564,20 @@ app.post('/api/facilities', (req, res) => {
 });
 
 app.put('/api/facilities/:id', (req, res) => {
-    const data = req.body;
+    const data = normalizePhoneFaxFields(req.body || {}, [
+        'req_provider_phone',
+        'req_provider_fax',
+        'serv_provider_phone',
+        'serv_provider_fax'
+    ]);
     if (!data.name) return res.status(400).json({ error: "Provider Preset Name is required" });
+    const validationError = validatePhoneFaxFields(data, [
+        ['req_provider_phone', 'Requesting provider phone'],
+        ['req_provider_fax', 'Requesting provider fax'],
+        ['serv_provider_phone', 'Servicing provider phone'],
+        ['serv_provider_fax', 'Servicing provider fax']
+    ]);
+    if (validationError) return res.status(400).json({ error: validationError });
 
     const stmt = db.prepare(`
         UPDATE provider_presets SET
@@ -244,7 +612,7 @@ app.delete('/api/facilities/:id', (req, res) => {
 
 // --- Auth Requests & PDF Generation ---
 app.get('/api/clients/:id/auth-requests', (req, res) => {
-    db.all("SELECT id, date_created, last_updated, is_draft, fax_status, fax_to_number, fax_details_id, form_data, record_number, clinical_status, fax_sent_date FROM auth_requests WHERE client_id = ? ORDER BY COALESCE(last_updated, date_created) DESC", [req.params.id], (err, rows) => {
+    db.all("SELECT id, date_created, last_updated, is_draft, fax_status, fax_to_number, fax_details_id, form_data, record_number, clinical_status, fax_sent_date, intakeq_uploaded_at FROM auth_requests WHERE client_id = ? ORDER BY COALESCE(last_updated, date_created) DESC", [req.params.id], (err, rows) => {
         if (err) return res.status(500).json({ error: err.message });
         res.json(rows);
     });
@@ -257,6 +625,7 @@ app.get('/api/auth-requests/all', (req, res) => {
             a.client_id,
             a.form_data,
             a.clinical_status,
+            a.intakeq_uploaded_at,
             a.is_draft,
             c.name as client_name
         FROM auth_requests a
@@ -289,13 +658,21 @@ app.get('/api/fax-log', (req, res) => {
     });
 });
 
-app.post('/api/save-auth-draft', (req, res) => {
+app.post('/api/save-auth-draft', async (req, res) => {
     const { client_id, auth_id, form_data } = req.body;
     if (!client_id || !form_data) return res.status(400).json({ error: "Client ID and form data required" });
 
     const formDataStr = typeof form_data === 'string' ? form_data : JSON.stringify(form_data);
 
     if (auth_id) {
+        try {
+            const existing = await getDb("SELECT id, intakeq_uploaded_at FROM auth_requests WHERE id = ?", [auth_id]);
+            if (!existing) return res.status(404).json({ error: "Not found" });
+            if (isImmutableAuthorization(existing)) return sendImmutableAuthorizationResponse(res);
+        } catch (err) {
+            return res.status(500).json({ error: err.message });
+        }
+
         db.run(
             "UPDATE auth_requests SET form_data = ?, is_draft = 1, last_updated = datetime('now') WHERE id = ?",
             [formDataStr, auth_id],
@@ -307,7 +684,7 @@ app.post('/api/save-auth-draft', (req, res) => {
     } else {
         getNextRecordNumber().then(num => {
             db.run(
-                "INSERT INTO auth_requests (client_id, form_data, is_draft, last_updated, record_number) VALUES (?, ?, 1, datetime('now'), ?)",
+                "INSERT INTO auth_requests (client_id, form_data, is_draft, last_updated, record_number, clinical_status) VALUES (?, ?, 1, datetime('now'), ?, 'Draft')",
                 [client_id, formDataStr, num],
                 function (err) {
                     if (err) return res.status(500).json({ error: err.message });
@@ -358,8 +735,10 @@ app.get('/api/auth-requests/:id/preview', (req, res) => {
 });
 
 app.delete('/api/auth-requests/:id', (req, res) => {
-    db.get("SELECT pdf_path FROM auth_requests WHERE id = ?", [req.params.id], (err, row) => {
+    db.get("SELECT pdf_path, intakeq_uploaded_at FROM auth_requests WHERE id = ?", [req.params.id], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
+        if (!row) return res.status(404).json({ error: "Not found" });
+        if (isImmutableAuthorization(row)) return sendImmutableAuthorizationResponse(res);
         if (row && row.pdf_path && fs.existsSync(row.pdf_path)) {
             try { fs.unlinkSync(row.pdf_path); } catch (e) { }
         }
@@ -372,6 +751,18 @@ app.delete('/api/auth-requests/:id', (req, res) => {
 
 app.put('/api/auth-requests/:id', (req, res) => {
     const { form_data, clinical_status } = req.body;
+    if (form_data) {
+        db.get("SELECT intakeq_uploaded_at FROM auth_requests WHERE id = ?", [req.params.id], (err, row) => {
+            if (err) return res.status(500).json({ error: err.message });
+            if (!row) return res.status(404).json({ error: "Not found" });
+            if (isImmutableAuthorization(row)) return sendImmutableAuthorizationResponse(res);
+            updateAuthRequest();
+        });
+    } else {
+        updateAuthRequest();
+    }
+
+    function updateAuthRequest() {
     let query = "UPDATE auth_requests SET ";
     let params = [];
     if (form_data) {
@@ -391,6 +782,7 @@ app.put('/api/auth-requests/:id', (req, res) => {
         if (this.changes === 0) return res.status(404).json({ error: "Not found" });
         res.json({ changes: this.changes });
     });
+    }
 });
 
 app.post('/api/generate-auth', upload.array('attachments', 10), async (req, res) => {
@@ -403,6 +795,12 @@ app.post('/api/generate-auth', upload.array('attachments', 10), async (req, res)
         const formData = JSON.parse(formDataStr);
         const clientId = formData.client_id;
         const authId = formData.auth_id;
+
+        if (authId) {
+            const existing = await getDb("SELECT id, intakeq_uploaded_at FROM auth_requests WHERE id = ?", [authId]);
+            if (!existing) return res.status(404).json({ error: "Not found" });
+            if (isImmutableAuthorization(existing)) return sendImmutableAuthorizationResponse(res);
+        }
 
         // Hardcode Servicing Facility details
         Object.assign(formData, {
@@ -533,27 +931,25 @@ app.post('/api/generate-auth', upload.array('attachments', 10), async (req, res)
         fs.writeFileSync(filepath, finalPdfBytes);
 
         // 4. Save record to DB
+        let savedAuthId = authId || '';
         if (authId) {
-            db.get("SELECT pdf_path FROM auth_requests WHERE id = ?", [authId], (err, row) => {
-                if (row && row.pdf_path && fs.existsSync(row.pdf_path)) {
-                    try { fs.unlinkSync(row.pdf_path); } catch (e) { }
-                }
-                db.run("UPDATE auth_requests SET form_data = ?, pdf_path = ?, is_draft = 0, last_updated = datetime('now'), date_created = CURRENT_TIMESTAMP WHERE id = ?",
-                    [formDataStr, filepath, authId], function (err) {
-                        if (err) console.error("Error updating auth request:", err);
-                    }
-                );
-            });
+            const row = await getDb("SELECT pdf_path FROM auth_requests WHERE id = ?", [authId]);
+            if (row && row.pdf_path && fs.existsSync(row.pdf_path)) {
+                try { fs.unlinkSync(row.pdf_path); } catch (e) { }
+            }
+            await runDb("UPDATE auth_requests SET form_data = ?, pdf_path = ?, is_draft = 0, clinical_status = 'In Review', last_updated = datetime('now'), date_created = CURRENT_TIMESTAMP WHERE id = ?",
+                [formDataStr, filepath, authId]
+            );
         } else {
-            getNextRecordNumber().then(num => {
-                db.run("INSERT INTO auth_requests (client_id, form_data, pdf_path, is_draft, last_updated, record_number) VALUES (?, ?, ?, 0, datetime('now'), ?)",
-                    [clientId, formDataStr, filepath, num], function (err) {
-                        if (err) console.error("Error saving auth request:", err);
-                    });
-            }).catch(err => console.error("Error generating record number:", err));
+            const num = await getNextRecordNumber();
+            const result = await runDb("INSERT INTO auth_requests (client_id, form_data, pdf_path, is_draft, last_updated, record_number, clinical_status) VALUES (?, ?, ?, 0, datetime('now'), ?, 'In Review')",
+                [clientId, formDataStr, filepath, num]
+            );
+            savedAuthId = String(result.lastID);
         }
 
         // 5. Send file to client
+        res.setHeader('X-Auth-Request-Id', savedAuthId);
         res.download(filepath);
 
     } catch (err) {
@@ -569,6 +965,9 @@ app.post('/api/send-fax/:authId', async (req, res) => {
         const { toFaxNumber } = req.body;
 
         if (!toFaxNumber) return res.status(400).json({ error: "Recipient fax number is required" });
+        const toFaxValidationError = phoneFaxError(toFaxNumber, 'Recipient fax number');
+        if (toFaxValidationError) return res.status(400).json({ error: toFaxValidationError });
+        const normalizedToFaxNumber = normalizePhoneFax(toFaxNumber);
 
         // Get SRFax credentials from settings
         const settings = await new Promise((resolve, reject) => {
@@ -609,20 +1008,20 @@ app.post('/api/send-fax/:authId', async (req, res) => {
         };
 
         const normalizedBuffer = await normalizePdfForFax(pdfBuffer);
-        const result = await sendFax(creds, toFaxNumber, fileName, normalizedBuffer);
+        const result = await sendFax(creds, normalizedToFaxNumber, fileName, normalizedBuffer);
 
         if (result.Status === 'Success') {
             // Store fax details in DB
             db.run(
                 "UPDATE auth_requests SET fax_details_id = ?, fax_status = 'In Progress', fax_sent_date = datetime('now'), fax_to_number = ?, clinical_status = 'Pending' WHERE id = ?",
-                [result.Result, toFaxNumber, authId]
+                [result.Result, normalizedToFaxNumber, authId]
             );
             res.json({ success: true, faxDetailsId: result.Result, message: "Fax queued successfully" });
         } else {
             // Log failure in DB
             db.run(
                 "UPDATE auth_requests SET fax_status = 'Failed', fax_sent_date = datetime('now'), fax_to_number = ? WHERE id = ?",
-                [toFaxNumber, authId]
+                [normalizedToFaxNumber, authId]
             );
             res.status(400).json({ error: `SRFax error: ${result.Result}` });
         }
@@ -645,7 +1044,7 @@ app.post('/api/check-fax-status/:authId', async (req, res) => {
 
         // Get fax_details_id from auth
         const auth = await new Promise((resolve, reject) => {
-            db.get("SELECT fax_details_id FROM auth_requests WHERE id = ?", [authId], (err, row) => {
+            db.get("SELECT fax_details_id, fax_status FROM auth_requests WHERE id = ?", [authId], (err, row) => {
                 if (err) reject(err);
                 else resolve(row);
             });
@@ -659,6 +1058,15 @@ app.post('/api/check-fax-status/:authId', async (req, res) => {
         if (!auth.fax_details_id) {
             console.warn(`[FAX STATUS] No fax_details_id for Auth request ${authId}.`);
             return res.status(400).json({ error: "No fax has been sent for this auth request." });
+        }
+
+        if (isTerminalFaxStatus(auth.fax_status)) {
+            return res.json({
+                success: true,
+                faxStatus: auth.fax_status,
+                skipped: true,
+                message: "Fax already has a terminal local status."
+            });
         }
 
         // Get SRFax credentials
@@ -709,13 +1117,11 @@ app.get('/api/mco-fax-directory', (req, res) => {
 app.post('/api/mco-fax-directory', (req, res) => {
     const { mco_name, fax_number } = req.body;
     if (!mco_name || !fax_number) return res.status(400).json({ error: "MCO name and fax number required" });
-    
-    const cleanFax = fax_number.replace(/\D/g, '');
-    if (cleanFax.length !== 11) {
-        return res.status(400).json({ error: "MCO Fax Number must be exactly 11 digits (e.g. 15021234567)." });
-    }
+    const validationError = phoneFaxError(fax_number, 'MCO fax number');
+    if (validationError) return res.status(400).json({ error: validationError });
+    const normalizedFax = normalizePhoneFax(fax_number);
 
-    db.run("INSERT INTO mco_fax_directory (mco_name, fax_number) VALUES (?, ?)", [mco_name, cleanFax], function (err) {
+    db.run("INSERT INTO mco_fax_directory (mco_name, fax_number) VALUES (?, ?)", [mco_name, normalizedFax], function (err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ id: this.lastID });
     });
@@ -723,7 +1129,10 @@ app.post('/api/mco-fax-directory', (req, res) => {
 
 app.put('/api/mco-fax-directory/:id', (req, res) => {
     const { mco_name, fax_number } = req.body;
-    db.run("UPDATE mco_fax_directory SET mco_name = ?, fax_number = ? WHERE id = ?", [mco_name, fax_number, req.params.id], function (err) {
+    if (!mco_name || !fax_number) return res.status(400).json({ error: "MCO name and fax number required" });
+    const validationError = phoneFaxError(fax_number, 'MCO fax number');
+    if (validationError) return res.status(400).json({ error: validationError });
+    db.run("UPDATE mco_fax_directory SET mco_name = ?, fax_number = ? WHERE id = ?", [mco_name, normalizePhoneFax(fax_number), req.params.id], function (err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ changes: this.changes });
     });
@@ -756,11 +1165,20 @@ app.post('/api/send-test-fax', async (req, res) => {
         const testPdfBuffer = await page.pdf({ format: 'A4' });
         await browser.close();
 
-        // 3. Send back to caller ID (prefix with 1 if 10 digits)
-        const callerId = settings.srfax_caller_id.replace(/\D/g, '');
-        const toFax = callerId.length === 10 ? '1' + callerId : callerId;
+        // 3. Determine destination — explicit override or loopback to caller ID
+        const callerId = toSrfaxCallerId(settings.srfax_caller_id);
+        const overrideRaw = toDialableFaxNumber(req.body && req.body.toFax ? req.body.toFax : '');
+        let toFax;
+        if (overrideRaw) {
+            toFax = overrideRaw;
+            if (toFax.length !== 11) {
+                return res.status(400).json({ error: `Invalid test destination: ${req.body.toFax}. Must be 10 or 11 digits.` });
+            }
+        } else {
+            toFax = callerId.length === 10 ? '1' + callerId : callerId;
+        }
 
-        console.log(`[TEST FAX] Sending to: ${toFax} | Caller ID: ${callerId} | AccessID: ${settings.srfax_access_id}`);
+        console.log(`[TEST FAX] Sending to: ${toFax} | Caller ID: ${callerId} | AccessID: ${settings.srfax_access_id} | Override: ${overrideRaw || 'none'}`);
 
         const creds = {
             access_id: settings.srfax_access_id,
@@ -774,12 +1192,45 @@ app.post('/api/send-test-fax', async (req, res) => {
         console.log(`[TEST FAX] SRFax raw response:`, JSON.stringify(result));
 
         if (result.Status === 'Success') {
-            res.json({ success: true, faxDetailsId: result.Result, message: `Test fax queued successfully to ${toFax}. FaxID: ${result.Result}` });
+            res.json({ success: true, faxDetailsId: result.Result, toFax, callerId, message: `Test fax queued successfully to ${toFax}. FaxID: ${result.Result}` });
         } else {
             res.status(400).json({ error: `SRFax error: ${result.Result}`, raw: result, toFax, callerId });
         }
     } catch (err) {
         console.error("Test Fax Error:", err);
+        res.status(500).json({ error: err.message });
+    }
+});
+
+// --- Standalone fax status check (no auth record linkage, for test faxes and diagnostics) ---
+app.post('/api/fax-status', async (req, res) => {
+    try {
+        const { faxDetailsId } = req.body || {};
+        if (!faxDetailsId) return res.status(400).json({ error: 'faxDetailsId is required' });
+
+        const settings = await new Promise((resolve, reject) => {
+            db.get("SELECT srfax_access_id, srfax_access_pwd FROM settings WHERE id = 1", (err, row) => {
+                if (err) reject(err);
+                else resolve(row || {});
+            });
+        });
+
+        if (!settings.srfax_access_id || !settings.srfax_access_pwd) {
+            return res.status(400).json({ error: 'SRFax credentials not configured.' });
+        }
+
+        const result = await checkFaxStatus(
+            { access_id: settings.srfax_access_id, access_pwd: settings.srfax_access_pwd },
+            faxDetailsId
+        );
+
+        if (result.Status === 'Success') {
+            res.json({ success: true, faxStatus: (result.Result && result.Result.SentStatus) || 'Unknown', details: result.Result });
+        } else {
+            res.status(400).json({ error: `SRFax error: ${result.Result}`, raw: result });
+        }
+    } catch (err) {
+        console.error('Fax Status Error:', err);
         res.status(500).json({ error: err.message });
     }
 });
@@ -794,7 +1245,7 @@ app.post('/api/diag-fax', async (req, res) => {
             });
         });
 
-        const callerId = (settings.srfax_caller_id || '').replace(/\D/g, '');
+        const callerId = toSrfaxCallerId(settings.srfax_caller_id);
         const toFax = callerId.length === 10 ? '1' + callerId : callerId;
 
         res.json({
@@ -817,8 +1268,7 @@ app.post('/api/diag-fax', async (req, res) => {
 app.get('/api/intakeq/notes', async (req, res) => {
     try {
         const clientName = req.query.clientName;
-        const intakeqClientId = req.query.intakeqClientId; // preferred — direct numeric lookup
-        const localClientId = req.query.localClientId;     // if provided, we can persist discovered IQid
+        const intakeqClientId = req.query.intakeqClientId;
 
         if (!clientName && !intakeqClientId) {
             return res.status(400).json({ error: "Either clientName or intakeqClientId query parameter is required" });
@@ -835,24 +1285,10 @@ app.get('/api/intakeq/notes', async (req, res) => {
             return res.status(400).json({ error: "IntakeQ API Key not configured in Settings." });
         }
 
-        const fetch = (await import('node-fetch')).default;
-
-        // Build the query: prefer clientId for exact match, fall back to name search
-        const notesUrl = intakeqClientId
-            ? `https://intakeq.com/api/v1/notes/summary?clientId=${intakeqClientId}`
-            : `https://intakeq.com/api/v1/notes/summary?client=${encodeURIComponent(clientName)}`;
-
-        const response = await fetch(notesUrl, {
-            method: 'GET',
-            headers: { 'X-Auth-Key': settings.intakeq_api_key }
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`IntakeQ API Error: ${response.status} - ${errText}`);
-        }
-
-        const notes = await response.json();
+        const notes = await intakeq.getNotesSummary(
+            settings.intakeq_api_key,
+            { clientId: intakeqClientId, clientName }
+        );
         res.json(notes);
     } catch (err) {
         console.error("IntakeQ Notes Error:", err);
@@ -877,22 +1313,20 @@ app.get('/api/intakeq/client-search', async (req, res) => {
             return res.status(400).json({ error: "IntakeQ API Key not configured in Settings." });
         }
 
-        const fetch = (await import('node-fetch')).default;
-        const response = await fetch(`https://intakeq.com/api/v1/clients?search=${encodeURIComponent(name)}&includeProfile=true`, {
-            method: 'GET',
-            headers: { 'X-Auth-Key': settings.intakeq_api_key }
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`IntakeQ API Error: ${response.status} - ${errText}`);
-        }
-
-        const clients = await response.json();
+        const clients = await intakeq.searchClients(settings.intakeq_api_key, name);
+        logIntakeqCustomFieldLabels(clients);
         res.json(clients);
     } catch (err) {
         console.error("IntakeQ Client Search Error:", err);
-        res.status(500).json({ error: err.message });
+        if (err.upstream === 'IntakeQ') {
+            return res.status(502).json({
+                error: "IntakeQ client search failed",
+                detail: err.body || err.message,
+                upstreamStatus: err.status || null,
+                traceId: req.traceId || null
+            });
+        }
+        res.status(500).json({ error: err.message, traceId: req.traceId || null });
     }
 });
 
@@ -901,7 +1335,6 @@ app.post('/api/intakeq/upload-auth/:authId', async (req, res) => {
     try {
         const authId = req.params.authId;
 
-        // Get auth record including the client's stored IntakeQ ID if available
         const auth = await new Promise((resolve, reject) => {
             db.get("SELECT a.pdf_path, a.client_id, c.name as client_name, c.intakeq_client_id FROM auth_requests a JOIN clients c ON a.client_id = c.id WHERE a.id = ?", [authId], (err, row) => {
                 if (err) reject(err);
@@ -924,23 +1357,10 @@ app.post('/api/intakeq/upload-auth/:authId', async (req, res) => {
             return res.status(400).json({ error: "IntakeQ API Key not configured in Settings." });
         }
 
-        const fetch = (await import('node-fetch')).default;
-        const FormData = (await import('form-data')).default;
-
         let intakeqClientId = auth.intakeq_client_id;
 
-        // Only do a name search if we don't already have the stored IntakeQ client ID
         if (!intakeqClientId) {
-            const searchResp = await fetch(`https://intakeq.com/api/v1/clients?search=${encodeURIComponent(auth.client_name)}&includeProfile=true`, {
-                headers: { 'X-Auth-Key': settings.intakeq_api_key }
-            });
-
-            if (!searchResp.ok) {
-                const errText = await searchResp.text();
-                throw new Error(`IntakeQ client lookup failed: ${searchResp.status} - ${errText}`);
-            }
-
-            const matchedClients = await searchResp.json();
+            const matchedClients = await intakeq.searchClients(settings.intakeq_api_key, auth.client_name);
 
             if (!Array.isArray(matchedClients) || matchedClients.length === 0) {
                 return res.status(404).json({ error: `No client named "${auth.client_name}" found in IntakeQ. Use Sync from IntakeQ first to link this client.` });
@@ -953,34 +1373,30 @@ app.post('/api/intakeq/upload-auth/:authId', async (req, res) => {
                 return res.status(404).json({ error: "Could not determine IntakeQ Client ID from search results." });
             }
 
-            // Persist the discovered ID so future calls skip this search
             db.run("UPDATE clients SET intakeq_client_id = ? WHERE id = ?", [String(intakeqClientId), auth.client_id]);
         }
 
-        // Upload the PDF to the client's IntakeQ file gallery
         const pdfBuffer = fs.readFileSync(auth.pdf_path);
-        const formData = new FormData();
-        formData.append('file', pdfBuffer, {
-            filename: `AuthRequest_${auth.client_name.replace(/ /g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`,
-            contentType: 'application/pdf'
-        });
+        const filename = `AuthRequest_${auth.client_name.replace(/ /g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`;
 
-        const uploadResp = await fetch(`https://intakeq.com/api/v1/files/${intakeqClientId}`, {
-            method: 'POST',
-            headers: {
-                'X-Auth-Key': settings.intakeq_api_key,
-                ...formData.getHeaders()
-            },
-            body: formData
-        });
+        const uploadResult = await intakeq.uploadFile(
+            settings.intakeq_api_key,
+            intakeqClientId,
+            pdfBuffer,
+            filename
+        );
 
-        if (!uploadResp.ok) {
-            const errText = await uploadResp.text();
-            throw new Error(`IntakeQ upload failed: ${uploadResp.status} - ${errText}`);
+        if (uploadResult && uploadResult.raw !== undefined) {
+            console.warn("[IntakeQ Upload] Non-JSON success body:", uploadResult.raw);
         }
 
-        const uploadResult = await uploadResp.json();
-        res.json({ success: true, message: `Auth PDF uploaded to IntakeQ for "${auth.client_name}" (IntakeQ Client #${intakeqClientId})`, file: uploadResult });
+        await runDb("UPDATE auth_requests SET intakeq_uploaded_at = datetime('now') WHERE id = ?", [authId]);
+
+        res.json({
+            success: true,
+            message: `Auth PDF uploaded to IntakeQ for "${auth.client_name}" (IntakeQ Client #${intakeqClientId})`,
+            file: uploadResult
+        });
     } catch (err) {
         console.error("IntakeQ Upload Auth Error:", err);
         res.status(500).json({ error: err.message });
@@ -1006,18 +1422,7 @@ app.get('/api/intakeq/files', async (req, res) => {
             return res.status(400).json({ error: "IntakeQ API Key not configured in Settings." });
         }
 
-        const fetch = (await import('node-fetch')).default;
-        const response = await fetch(`https://intakeq.com/api/v1/files?clientId=${intakeqClientId}`, {
-            method: 'GET',
-            headers: { 'X-Auth-Key': settings.intakeq_api_key }
-        });
-
-        if (!response.ok) {
-            const errText = await response.text();
-            throw new Error(`IntakeQ API Error: ${response.status} - ${errText}`);
-        }
-
-        const files = await response.json();
+        const files = await intakeq.listFiles(settings.intakeq_api_key, intakeqClientId);
         res.json(files);
     } catch (err) {
         console.error("IntakeQ Get Files Error:", err);
@@ -1025,8 +1430,15 @@ app.get('/api/intakeq/files', async (req, res) => {
     }
 });
 
-// --- Server Start ---
-app.listen(port, () => {
+app.use(createErrorLogger());
 
-    console.log(`Auth Forms app listening at http://localhost:${port}`);
-});
+// --- Server Start ---
+if (require.main === module) {
+    installProcessErrorLogging();
+    app.listen(port, () => {
+        console.log(`Auth Forms app listening at http://localhost:${port}`);
+        console.log(`Trace log: ${DEFAULT_LOG_FILE}`);
+    });
+}
+
+module.exports = app;

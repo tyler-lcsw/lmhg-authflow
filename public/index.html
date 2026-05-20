@@ -35,6 +35,7 @@
                 <li><a href="#" class="nav-link" data-view="fax-log"><i class="ph ph-receipt"></i> Fax Log</a></li>
                 <li><a href="#" class="nav-link" data-view="facilities"><i class="ph ph-address-book"></i> Directories</a>
                 </li>
+                <li><a href="#" class="nav-link" data-view="pcp-directory"><i class="ph ph-stethoscope"></i> PCP Directory</a></li>
                 <li><a href="#" class="nav-link" data-view="calendar"><i class="ph ph-calendar"></i> Calendar</a></li>
                 <li><a href="#" class="nav-link" data-view="settings"><i class="ph ph-gear"></i> Settings</a></li>
             </ul>
@@ -152,6 +153,87 @@
                     </div>
                 </section>
 
+                <!-- VIEW: PCP Directory -->
+                <section id="view-pcp-directory" class="view">
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <h3><i class="ph ph-stethoscope"></i> PCP Directory</h3>
+                            <div class="header-actions">
+                                <button class="btn btn-primary" id="btn-add-pcp">
+                                    <i class="ph ph-plus"></i> New PCP
+                                </button>
+                            </div>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="modern-table" id="pcp-directory-table">
+                                    <thead>
+                                        <tr>
+                                            <th>PCP Name</th>
+                                            <th>Phone</th>
+                                            <th>NPI</th>
+                                            <th>Clients</th>
+                                            <th>Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        <!-- Populated via JS -->
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: PCP Directory Form -->
+                <section id="view-pcp-form" class="view">
+                    <button class="btn btn-ghost mb-4 nav-back" data-target="pcp-directory"><i
+                            class="ph ph-arrow-left"></i> Back to PCP Directory</button>
+                    <div class="card glass-card">
+                        <div class="card-header">
+                            <h3 id="pcp-form-title">PCP Details</h3>
+                        </div>
+                        <div class="card-body">
+                            <form id="pcp-form" class="modern-form">
+                                <input type="hidden" id="pcp_id">
+                                <div class="form-grid">
+                                    <div class="form-group">
+                                        <label>PCP Name</label>
+                                        <input type="text" id="pcp_name" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Phone</label>
+                                        <input type="tel" id="pcp_phone" required>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>NPI</label>
+                                        <input type="text" id="pcp_npi" required>
+                                    </div>
+                                </div>
+
+                                <div class="form-actions mt-4" style="display:flex; gap:12px;">
+                                    <button type="submit" class="btn btn-primary"><i class="ph ph-floppy-disk"></i> Save PCP</button>
+                                </div>
+                            </form>
+
+                            <h4 class="section-divider">Assign Clients</h4>
+                            <div class="form-grid">
+                                <div class="form-group">
+                                    <label>Client</label>
+                                    <select id="pcp_assign_client" class="modern-select">
+                                        <option value="">Select client...</option>
+                                    </select>
+                                </div>
+                                <div class="form-group" style="align-self:end;">
+                                    <button type="button" class="btn btn-secondary" id="btn-assign-pcp-client">
+                                        <i class="ph ph-link-simple"></i> Assign Client
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
                 <!-- VIEW: Client Form (Create/Edit) -->
                 <section id="view-client-form" class="view">
                     <button class="btn btn-ghost mb-4 nav-back" data-target="dashboard"><i class="ph ph-arrow-left"></i>
@@ -196,16 +278,25 @@
                                 <h4 class="section-divider">Medical Details</h4>
                                 <div class="form-grid">
                                     <div class="form-group">
+                                        <label>Use Existing PCP</label>
+                                        <select id="c_pcp_existing" class="modern-select">
+                                            <option value="">Select existing PCP...</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
                                         <label>Primary Care Provider (PCP)</label>
-                                        <input type="text" id="c_pcp">
+                                        <input type="text" id="c_pcp" required>
                                     </div>
                                     <div class="form-group">
                                         <label>PCP Phone</label>
-                                        <input type="tel" id="c_pcp_phone">
+                                        <input type="tel" id="c_pcp_phone" required>
                                     </div>
                                     <div class="form-group">
                                         <label>PCP NPI</label>
-                                        <input type="text" id="c_pcp_npi">
+                                        <input type="text" id="c_pcp_npi" required>
+                                    </div>
+                                    <div class="form-group col-span-2">
+                                        <div id="pcp-match-status" class="pcp-match-status" aria-live="polite"></div>
                                     </div>
                                     <div class="form-group switch-group">
                                         <label>Pregnant?</label>
@@ -224,7 +315,7 @@
                                         <select id="c_work_injury" class="modern-select">
                                             <option value="">Select...</option>
                                             <option value="yes">Yes</option>
-                                            <option value="no">No</option>
+                                            <option value="no" selected>No</option>
                                         </select>
                                     </div>
                                     <div class="form-group switch-group">
@@ -232,7 +323,7 @@
                                         <select id="c_mva" class="modern-select">
                                             <option value="">Select...</option>
                                             <option value="yes">Yes</option>
-                                            <option value="no">No</option>
+                                            <option value="no" selected>No</option>
                                         </select>
                                     </div>
                                     <div class="form-group switch-group">
@@ -240,7 +331,7 @@
                                         <select id="c_other_insurance" class="modern-select">
                                             <option value="">Select...</option>
                                             <option value="yes">Yes</option>
-                                            <option value="no">No</option>
+                                            <option value="no" selected>No</option>
                                         </select>
                                     </div>
                                     <div class="form-group">
@@ -530,10 +621,11 @@
 
                     <div class="tabs-container">
                         <div class="tab-headers">
-                            <div class="tab-header active" data-tab="tab-form"><i class="ph ph-file-text"></i> Form Data</div>
-                            <div class="tab-header" data-tab="tab-attachments"><i class="ph ph-paperclip"></i> Attachments</div>
-                            <div class="tab-header" data-tab="tab-actions"><i class="ph ph-lightning"></i> Actions & History</div>
+                            <div class="tab-header active" data-tab="tab-form"><span class="step-number">1</span><i class="ph ph-file-text"></i> Form Data</div>
+                            <div class="tab-header" data-tab="tab-attachments"><span class="step-number">2</span><i class="ph ph-paperclip"></i> Attachments</div>
+                            <div class="tab-header" data-tab="tab-actions"><span class="step-number">3</span><i class="ph ph-lightning"></i> Actions & History</div>
                         </div>
+                        <div id="auth-flow-error" class="auth-flow-error" role="alert" style="display:none;"></div>
 
                         <!-- Left Panel: Form Inputs -->
                         <div class="card glass-card form-panel tab-pane active" id="tab-form">
@@ -698,6 +790,9 @@
                                         <button type="button" class="btn btn-primary" id="btn-save-draft">
                                             <i class="ph ph-floppy-disk"></i> Save Record
                                         </button>
+                                        <button type="button" class="btn btn-secondary" id="btn-auth-next-attachments">
+                                            Step 2: Attachments <i class="ph ph-arrow-right"></i>
+                                        </button>
                                     </div>
                                 </form>
                             </div>
@@ -746,6 +841,11 @@
                                 <ul class="file-list" id="file-list">
                                         <!-- Populated via JS -->
                                     </ul>
+                                <div class="form-actions" style="grid-column: 1 / -1; text-align: right;">
+                                    <button type="button" class="btn btn-primary" id="btn-auth-next-actions">
+                                        Step 3: Actions & History <i class="ph ph-arrow-right"></i>
+                                    </button>
+                                </div>
                             </div>
                         </div>
                         
@@ -764,40 +864,30 @@
                                         </div>
                                     </div>
                                 </div>
-                                <div class="flex-center mt-2 mb-6" style="gap: 16px;">
-                                    <button class="btn btn-primary btn-large generate-btn" id="btn-generate-pdf">
-                                        <i class="ph ph-magic-wand"></i> Generate PDF
-                                    </button>
-                                    <button class="btn btn-secondary btn-large" id="btn-send-fax">
-                                        <i class="ph ph-paper-plane-tilt"></i> Send via SRFax
-                                    </button>
-                                </div>
-
-                                <!-- Inline SRFax Layer Modal -->
-                                <div id="inline-fax-layer" class="card glass-card mb-6" style="display:none; border: 2px solid var(--primary); background: rgba(99, 102, 241, 0.05);">
-                                    <div class="card-header" style="background: transparent; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
-                                        <h3 style="color: var(--primary);"><i class="ph ph-paper-plane-tilt"></i> Send Authorization via SRFax</h3>
-                                        <button class="btn btn-ghost btn-sm" id="btn-close-fax-layer"><i class="ph ph-x"></i></button>
+                                <div class="action-steps mt-2 mb-6">
+                                    <div class="action-step" id="auth-generate-step">
+                                        <div class="action-step-copy">
+                                            <span class="step-number">4</span>
+                                            <div>
+                                                <h4>Generate PDF</h4>
+                                                <p class="text-sm">Create the authorization packet after form data and attachments are reviewed.</p>
+                                            </div>
+                                        </div>
+                                        <button class="btn btn-primary btn-large generate-btn" id="btn-generate-pdf">
+                                            <i class="ph ph-magic-wand"></i> Generate PDF
+                                        </button>
                                     </div>
-                                    <div class="card-body">
-                                        <div class="form-grid-1 mb-4">
-                                            <div class="form-group">
-                                                <label>1. Select Provider/MCO from Directory</label>
-                                                <select id="fax_directory_select" class="modern-select">
-                                                    <option value="">-- Choose from Directory --</option>
-                                                    <!-- Populated via JS -->
-                                                </select>
-                                                <small class="text-gray">Or enter a custom number below.</small>
-                                            </div>
-                                            <div class="form-group">
-                                                <label>2. Recipient Fax Number (11 digits)</label>
-                                                <input type="tel" id="fax_to_number" placeholder="15021234567" class="modern-input" style="font-size:1.1rem; padding:10px;">
+                                    <div class="action-step optional" id="auth-fax-step">
+                                        <div class="action-step-copy">
+                                            <span class="step-number">5</span>
+                                            <div>
+                                                <h4>Optional Fax</h4>
+                                                <p class="text-sm">Send the generated PDF through SRFax only when fax submission is needed.</p>
                                             </div>
                                         </div>
-                                        <div id="fax-layer-error" style="color:var(--danger); margin-bottom:12px; display:none;"></div>
-                                        <div style="text-align: right; margin-top: 20px;">
-                                            <button class="btn btn-primary" id="fax-layer-send"><i class="ph ph-paper-plane-tilt"></i> Dispatch Fax</button>
-                                        </div>
+                                        <button class="btn btn-secondary btn-large" id="btn-send-fax">
+                                            <i class="ph ph-paper-plane-tilt"></i> Send via SRFax
+                                        </button>
                                     </div>
                                 </div>
 
@@ -832,6 +922,35 @@
     <div class="loading-overlay" id="loading-overlay">
         <div class="spinner"></div>
         <p>Generating PDF... Please wait.</p>
+    </div>
+
+    <!-- SRFax Modal -->
+    <div id="inline-fax-layer" class="loading-overlay" style="display:none; background: rgba(15,23,42,0.55); align-items:center; justify-content:center;">
+        <div class="card glass-card" style="width:min(560px, calc(100vw - 32px)); border: 2px solid var(--primary); background: #fff;">
+            <div class="card-header" style="background: transparent; border-bottom: 1px solid rgba(0,0,0,0.05); padding-bottom: 12px; display: flex; justify-content: space-between; align-items: center;">
+                <h3 style="color: var(--primary);"><i class="ph ph-paper-plane-tilt"></i> Send Authorization via SRFax</h3>
+                <button class="btn btn-ghost btn-sm" id="btn-close-fax-layer"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="card-body">
+                <div class="form-grid-1 mb-4">
+                    <div class="form-group">
+                        <label>1. Select Provider/MCO from Directory</label>
+                        <select id="fax_directory_select" class="modern-select">
+                            <option value="">-- Choose from Directory --</option>
+                        </select>
+                        <small class="text-gray">Or enter a custom number below.</small>
+                    </div>
+                    <div class="form-group">
+                        <label>2. Recipient Fax Number (11 digits)</label>
+                        <input type="tel" id="fax_to_number" placeholder="15021234567" class="modern-input" style="font-size:1.1rem; padding:10px;">
+                    </div>
+                </div>
+                <div id="fax-layer-error" style="color:var(--danger); margin-bottom:12px; display:none;"></div>
+                <div style="text-align: right; margin-top: 20px;">
+                    <button class="btn btn-primary" id="fax-layer-send"><i class="ph ph-paper-plane-tilt"></i> Dispatch Fax</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- PDF Preview Modal -->

@@ -2,7 +2,7 @@ const sqlite3 = require('sqlite3').verbose();
 const path = require('path');
 const fs = require('fs');
 
-const dbPath = path.join(__dirname, 'database.sqlite');
+const dbPath = process.env.DB_PATH || path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
 db.serialize(() => {
@@ -24,6 +24,17 @@ db.serialize(() => {
             insurer TEXT,
             medicare_a BOOLEAN,
             medicare_b BOOLEAN
+        )
+    `);
+
+    // Primary Care Providers are shared across clients.
+    db.run(`
+        CREATE TABLE IF NOT EXISTS primary_care_providers (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL,
+            phone TEXT NOT NULL,
+            npi TEXT NOT NULL,
+            UNIQUE(name, phone, npi)
         )
     `);
 
@@ -126,11 +137,68 @@ db.serialize(() => {
         "ALTER TABLE auth_requests ADD COLUMN last_updated TEXT",
         "ALTER TABLE auth_requests ADD COLUMN record_number INTEGER",
         "ALTER TABLE auth_requests ADD COLUMN clinical_status TEXT DEFAULT 'In Review'",
-        "ALTER TABLE clients ADD COLUMN intakeq_client_id TEXT"
+        "ALTER TABLE auth_requests ADD COLUMN intakeq_uploaded_at TEXT",
+        "ALTER TABLE clients ADD COLUMN intakeq_client_id TEXT",
+        "ALTER TABLE clients ADD COLUMN primary_care_provider_id INTEGER REFERENCES primary_care_providers(id)"
     ];
     alterQueries.forEach(q => {
         db.run(q, (err) => { /* ignore "duplicate column" errors */ });
     });
+
+    // Migrate existing denormalized PCP data into shared provider rows.
+    db.run(`
+        INSERT OR IGNORE INTO primary_care_providers (name, phone, npi)
+        SELECT DISTINCT TRIM(pcp), TRIM(pcp_phone), TRIM(pcp_npi)
+        FROM clients
+        WHERE COALESCE(TRIM(pcp), '') <> ''
+          AND COALESCE(TRIM(pcp_phone), '') <> ''
+          AND COALESCE(TRIM(pcp_npi), '') <> ''
+    `);
+    db.run(`
+        UPDATE clients
+        SET primary_care_provider_id = (
+            SELECT id
+            FROM primary_care_providers
+            WHERE primary_care_providers.name = TRIM(clients.pcp)
+              AND primary_care_providers.phone = TRIM(clients.pcp_phone)
+              AND primary_care_providers.npi = TRIM(clients.pcp_npi)
+        )
+        WHERE primary_care_provider_id IS NULL
+          AND COALESCE(TRIM(pcp), '') <> ''
+          AND COALESCE(TRIM(pcp_phone), '') <> ''
+          AND COALESCE(TRIM(pcp_npi), '') <> ''
+    `);
+
+    db.run(`
+        UPDATE clients
+        SET medicaid_id = TRIM(mco_id),
+            mco_id = ''
+        WHERE COALESCE(TRIM(medicaid_id), '') = ''
+          AND COALESCE(TRIM(mco_id), '') <> ''
+          AND TRIM(mco_id) GLOB '00*'
+    `);
+    db.run(`
+        UPDATE clients
+        SET mco_id = TRIM(medicaid_id),
+            medicaid_id = ''
+        WHERE COALESCE(TRIM(mco_id), '') = ''
+          AND COALESCE(TRIM(medicaid_id), '') <> ''
+          AND TRIM(medicaid_id) NOT GLOB '00*'
+    `);
+    db.run(`
+        UPDATE clients
+        SET mco_id = ''
+        WHERE COALESCE(TRIM(medicaid_id), '') <> ''
+          AND medicaid_id = mco_id
+          AND TRIM(medicaid_id) GLOB '00*'
+    `);
+    db.run(`
+        UPDATE clients
+        SET medicaid_id = ''
+        WHERE COALESCE(TRIM(mco_id), '') <> ''
+          AND medicaid_id = mco_id
+          AND TRIM(mco_id) NOT GLOB '00*'
+    `);
 
     // Initialize record_number for existing records if they don't have one
     db.run("UPDATE auth_requests SET record_number = id WHERE record_number IS NULL", (err) => {
@@ -169,4 +237,3 @@ db.serialize(() => {
 });
 
 module.exports = db;
-
