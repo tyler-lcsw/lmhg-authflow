@@ -49,9 +49,9 @@ a { color: var(--brand); }
 <pre id="diag-out">—</pre>
 
 <h3>2. Send Test Fax</h3>
-<p class="hint">Sends a minimal PDF. Leave blank for caller-ID loopback. Facility fax is pre-filled.</p>
+<p class="hint">Sends a minimal PDF. Leave blank for caller-ID loopback, or enter a test destination.</p>
 <div class="row">
-    <input id="to-fax" type="text" value="8889771527" placeholder="Leave blank for loopback">
+    <input id="to-fax" type="text" value="" placeholder="Leave blank for loopback">
     <button onclick="sendTestFax()">Send Test Fax</button>
 </div>
 <pre id="send-out">—</pre>

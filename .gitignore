@@ -8,15 +8,24 @@ node_modules/
 
 # Database
 *.sqlite
+*.sqlite-*
+*.sqlite3
+*.sqlite3-*
 *.db
-database.sqlite
+*.db-*
 
-# Output files
+# Generated output and uploads
 output/
+uploads/
+*.pdf
+*.png
+*.jpg
+*.jpeg
 
 # Logs
 *.log
 npm-debug.log*
+.playwright-mcp/
 
 # OS files
 .DS_Store

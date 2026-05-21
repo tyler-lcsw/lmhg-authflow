@@ -202,12 +202,12 @@ test('phone and fax endpoints normalize accepted numbers and reject invalid numb
         const directory = await callJson(srv.baseUrl, '/api/mco-fax-directory', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ mco_name: 'Test MCO', fax_number: '8889771527' })
+            body: JSON.stringify({ mco_name: 'Test MCO', fax_number: '5025550101' })
         });
         assert.equal(directory.status, 200);
 
         const listedDirectory = await callJson(srv.baseUrl, '/api/mco-fax-directory');
-        assert.equal(listedDirectory.body[0].fax_number, '1 (888) 977-1527');
+        assert.equal(listedDirectory.body[0].fax_number, '1 (502) 555-0101');
 
         const invalid = await callJson(srv.baseUrl, '/api/pcp-directory', {
             method: 'POST',

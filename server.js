@@ -66,6 +66,29 @@ function toDialableFaxNumber(value) {
     return digits.length === 10 ? `1${digits}` : digits;
 }
 
+function firstConfiguredValue(...values) {
+    for (const value of values) {
+        const text = String(value || '').trim();
+        if (text) return text;
+    }
+    return '';
+}
+
+function applyServicingFacilityDefaults(formData, settings = {}) {
+    const env = process.env;
+    Object.assign(formData, {
+        servicing_facility: firstConfiguredValue(formData.servicing_facility, settings.servicing_facility, env.AUTH_FORMS_FACILITY_NAME),
+        serv_facility_npi: firstConfiguredValue(formData.serv_facility_npi, settings.serv_facility_npi, env.AUTH_FORMS_FACILITY_NPI),
+        serv_facility_tax_id: firstConfiguredValue(formData.serv_facility_tax_id, settings.serv_facility_tax_id, env.AUTH_FORMS_FACILITY_TAX_ID),
+        serv_facility_address: firstConfiguredValue(formData.serv_facility_address, settings.serv_facility_address, env.AUTH_FORMS_FACILITY_ADDRESS),
+        serv_facility_city: firstConfiguredValue(formData.serv_facility_city, settings.serv_facility_city, env.AUTH_FORMS_FACILITY_CITY),
+        serv_facility_state: firstConfiguredValue(formData.serv_facility_state, settings.serv_facility_state, env.AUTH_FORMS_FACILITY_STATE),
+        serv_facility_zip: firstConfiguredValue(formData.serv_facility_zip, settings.serv_facility_zip, env.AUTH_FORMS_FACILITY_ZIP),
+        serv_facility_phone: firstConfiguredValue(formData.serv_facility_phone, settings.serv_facility_phone, env.AUTH_FORMS_FACILITY_PHONE),
+        serv_facility_fax: firstConfiguredValue(formData.serv_facility_fax, settings.serv_facility_fax, env.AUTH_FORMS_FACILITY_FAX)
+    });
+}
+
 function normalizeClientInsuranceIds(data) {
     const copy = Object.assign({}, data);
     let medicaidId = String(copy.medicaid_id || '').trim();
@@ -288,8 +311,8 @@ function uploadAuthAttachments(req, res, next) {
 }
 
 // Ensure directories exist
-if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
-if (!fs.existsSync('output')) fs.mkdirSync('output');
+fs.mkdirSync('uploads', { recursive: true });
+fs.mkdirSync('output', { recursive: true });
 
 // === API ROUTES ===
 
@@ -885,18 +908,14 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
             if (isImmutableAuthorization(existing)) return sendImmutableAuthorizationResponse(res);
         }
 
-        // Hardcode Servicing Facility details
-        Object.assign(formData, {
-            servicing_facility: "Louisville Mental Health Group",
-            serv_facility_npi: "1386140358",
-            serv_facility_tax_id: "820604469",
-            serv_facility_address: "4229 Bardstown Road #310",
-            serv_facility_city: "Louisville",
-            serv_facility_state: "KY",
-            serv_facility_zip: "40218",
-            serv_facility_phone: "5024161416",
-            serv_facility_fax: "8889771527"
-        });
+        const facilitySettings = await getDb(`
+            SELECT servicing_facility, serv_facility_npi, serv_facility_tax_id,
+                   serv_facility_address, serv_facility_city, serv_facility_state,
+                   serv_facility_zip, serv_facility_phone, serv_facility_fax
+            FROM settings
+            WHERE id = 1
+        `);
+        applyServicingFacilityDefaults(formData, facilitySettings || {});
 
         // Fetch client and settings to merge with form data (optional, frontend might send it all)
         // Assume frontend sends everything needed for the EJS template inside formData.

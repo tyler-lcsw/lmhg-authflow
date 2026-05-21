@@ -26,7 +26,7 @@ node db.js          # Initialize/reset database (auto-runs on server start)
   3. pdf-lib merges IntakeQ notes PDFs and local file attachments
   4. PDF normalized via `normalizePdfForFax()` for SRFax compatibility
   5. Final PDF saved to `output/` directory
-- **Hardcoded servicing facility**: "Louisville Mental Health Group" details are hardcoded inside `POST /api/generate-auth` (server.js ~line 408). These override any settings-provided facility data before template rendering.
+- Servicing facility details are read from saved settings, submitted form data, or `AUTH_FORMS_FACILITY_*` environment variables before template rendering.
 - `node-fetch` is ESM-only so it is dynamically imported (`await import('node-fetch')`) inside each handler rather than at the top of the file.
 - Both `output/` and `uploads/` directories must exist before the server starts (multer writes temp files to `uploads/`, which are cleaned up after PDF merge).
 

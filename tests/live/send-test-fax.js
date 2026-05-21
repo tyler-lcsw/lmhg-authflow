@@ -6,11 +6,11 @@
  * Usage:
  *   node tests/live/send-test-fax.js [toFax] [--base=http://localhost:3000]
  *
- * Default destination: 8889771527 (facility fax). Sends a 1-page PDF.
+ * Default destination: 5025550101 (reserved example number). Sends a 1-page PDF.
  */
 
 const BASE = (process.argv.find(a => a.startsWith('--base=')) || '--base=http://localhost:3000').slice(7);
-const toFax = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : '8889771527';
+const toFax = process.argv[2] && !process.argv[2].startsWith('--') ? process.argv[2] : '5025550101';
 
 async function post(path, body) {
     const resp = await fetch(`${BASE}${path}`, {

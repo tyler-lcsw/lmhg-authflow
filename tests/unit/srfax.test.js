@@ -15,14 +15,14 @@ function mockPoster() {
 const validCreds = {
     access_id: 'AID',
     access_pwd: 'APW',
-    caller_id: '5024161416',
+    caller_id: '5025550100',
     sender_email: 'sender@example.com'
 };
 const pdfBuf = Buffer.from('%PDF-1.4 fake');
 
 test('sendFax throws when access_id is missing', async () => {
     await assert.rejects(
-        () => sendFax({ access_pwd: 'x', caller_id: '5024161416' }, '15021234567', 'f.pdf', pdfBuf, { post: mockPoster() }),
+        () => sendFax({ access_pwd: 'x', caller_id: '5025550100' }, '15021234567', 'f.pdf', pdfBuf, { post: mockPoster() }),
         /Missing SRFax credentials/
     );
 });
@@ -43,8 +43,8 @@ test('sendFax throws on 9-digit caller ID', async () => {
 
 test('sendFax accepts a normalized 11-digit caller ID and sends SRFax the required 10-digit caller ID', async () => {
     const post = mockPoster();
-    await sendFax({ ...validCreds, caller_id: '1 (502) 416-1416' }, '15021234567', 'f.pdf', pdfBuf, { post });
-    assert.equal(post.calls[0].sCallerID, '5024161416');
+    await sendFax({ ...validCreds, caller_id: '1 (502) 555-0100' }, '15021234567', 'f.pdf', pdfBuf, { post });
+    assert.equal(post.calls[0].sCallerID, '5025550100');
 });
 
 test('sendFax throws on 10-digit toFax (missing country code)', async () => {
@@ -63,9 +63,9 @@ test('sendFax throws on 12-digit toFax', async () => {
 
 test('sendFax strips non-digits from caller ID and toFax', async () => {
     const post = mockPoster();
-    await sendFax({ ...validCreds, caller_id: '(502) 416-1416' }, '1-502-123-4567', 'f.pdf', pdfBuf, { post });
+    await sendFax({ ...validCreds, caller_id: '(502) 555-0100' }, '1-502-123-4567', 'f.pdf', pdfBuf, { post });
     assert.equal(post.calls.length, 1);
-    assert.equal(post.calls[0].sCallerID, '5024161416');
+    assert.equal(post.calls[0].sCallerID, '5025550100');
     assert.equal(post.calls[0].sToFaxNumber, '15021234567');
 });
 
@@ -76,7 +76,7 @@ test('sendFax builds correct Queue_Fax payload', async () => {
     assert.equal(p.action, 'Queue_Fax');
     assert.equal(p.access_id, 'AID');
     assert.equal(p.access_pwd, 'APW');
-    assert.equal(p.sCallerID, '5024161416');
+    assert.equal(p.sCallerID, '5025550100');
     assert.equal(p.sSenderEmail, 'sender@example.com');
     assert.equal(p.sFaxType, 'SINGLE');
     assert.equal(p.sToFaxNumber, '15021234567');

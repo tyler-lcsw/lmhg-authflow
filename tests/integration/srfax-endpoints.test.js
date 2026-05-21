@@ -14,7 +14,7 @@ const {
 const VALID_CREDS = {
     srfax_access_id: 'TEST_AID',
     srfax_access_pwd: 'TEST_PWD',
-    srfax_caller_id: '5024161416',
+    srfax_caller_id: '5025550100',
     srfax_sender_email: 'test@example.com'
 };
 
@@ -27,9 +27,9 @@ test('POST /api/diag-fax reports all_valid when credentials are complete', async
         const r = await callJson(srv.baseUrl, '/api/diag-fax', { method: 'POST' });
         assert.equal(r.status, 200);
         assert.equal(r.body.all_valid, true);
-        assert.equal(r.body.caller_id_cleaned, '5024161416');
+        assert.equal(r.body.caller_id_cleaned, '5025550100');
         assert.equal(r.body.caller_id_length, 10);
-        assert.equal(r.body.to_fax_would_be, '15024161416');
+        assert.equal(r.body.to_fax_would_be, '15025550100');
         assert.equal(r.body.to_fax_length, 11);
         assert.equal(r.body.access_id, 'TEST****'); // masked
         assert.equal(r.body.access_pwd, '****');
@@ -67,16 +67,16 @@ test('POST /api/send-test-fax (no body) loops back to caller ID', async () => {
         assert.equal(r.status, 200);
         assert.equal(r.body.success, true);
         assert.equal(r.body.faxDetailsId, 'FAX_1');
-        assert.equal(r.body.toFax, '15024161416');
+        assert.equal(r.body.toFax, '15025550100');
         assert.equal(calls.length, 1);
-        assert.equal(calls[0].sToFaxNumber, '15024161416');
-        assert.equal(calls[0].sCallerID, '5024161416');
+        assert.equal(calls[0].sToFaxNumber, '15025550100');
+        assert.equal(calls[0].sCallerID, '5025550100');
     } finally {
         await srv.close();
     }
 });
 
-test('POST /api/send-test-fax with {toFax:"8889771527"} sends to 18889771527', async () => {
+test('POST /api/send-test-fax with {toFax:"5025550101"} sends to 15025550101', async () => {
     const srv = await startTestServer();
     try {
         await seedSettings(srv.db, VALID_CREDS);
@@ -88,13 +88,13 @@ test('POST /api/send-test-fax with {toFax:"8889771527"} sends to 18889771527', a
         const r = await callJson(srv.baseUrl, '/api/send-test-fax', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ toFax: '8889771527' })
+            body: JSON.stringify({ toFax: '5025550101' })
         });
         srfax.__resetPoster();
 
         assert.equal(r.status, 200);
-        assert.equal(r.body.toFax, '18889771527');
-        assert.equal(calls[0].sToFaxNumber, '18889771527');
+        assert.equal(r.body.toFax, '15025550101');
+        assert.equal(calls[0].sToFaxNumber, '15025550101');
     } finally {
         await srv.close();
     }
@@ -185,21 +185,21 @@ test('POST /api/send-fax/:authId queues a fax and stores fax_details_id', async 
         const r = await callJson(srv.baseUrl, `/api/send-fax/${authId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ toFaxNumber: '18889771527' })
+            body: JSON.stringify({ toFaxNumber: '15025550101' })
         });
         srfax.__resetPoster();
 
         assert.equal(r.status, 200);
         assert.equal(r.body.success, true);
         assert.equal(r.body.faxDetailsId, 'FAX_SEND_ID');
-        assert.equal(calls[0].sToFaxNumber, '18889771527');
+        assert.equal(calls[0].sToFaxNumber, '15025550101');
 
         // Confirm DB was updated
         const { selectOne } = require('../helpers/testServer');
         const row = await selectOne(srv.db, 'SELECT fax_details_id, fax_status, fax_to_number FROM auth_requests WHERE id = ?', [authId]);
         assert.equal(row.fax_details_id, 'FAX_SEND_ID');
         assert.equal(row.fax_status, 'In Progress');
-        assert.equal(row.fax_to_number, '1 (888) 977-1527');
+        assert.equal(row.fax_to_number, '1 (502) 555-0101');
     } finally {
         await srv.close();
     }
@@ -218,7 +218,7 @@ test('POST /api/send-fax/:authId returns 404 when PDF is missing', async () => {
         const r = await callJson(srv.baseUrl, `/api/send-fax/${authId}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ toFaxNumber: '18889771527' })
+            body: JSON.stringify({ toFaxNumber: '15025550101' })
         });
         srfax.__resetPoster();
 
