@@ -1,4 +1,36 @@
 // === APP STATE ===
+const API_TOKEN_STORAGE_KEY = 'authFormsApiToken';
+const nativeFetch = window.fetch.bind(window);
+
+function getApiToken() {
+    let token = sessionStorage.getItem(API_TOKEN_STORAGE_KEY) || '';
+    while (!token) {
+        token = window.prompt('Enter the Auth Forms API token') || '';
+        token = token.trim();
+    }
+    sessionStorage.setItem(API_TOKEN_STORAGE_KEY, token);
+    return token;
+}
+
+window.fetch = async (input, init = {}) => {
+    const url = typeof input === 'string' ? input : input.url;
+    const isApiRequest = typeof url === 'string' && (url.startsWith('/api') || url.includes('/api/'));
+    const requestInit = Object.assign({}, init);
+
+    if (isApiRequest) {
+        const headers = new Headers(requestInit.headers || {});
+        headers.set('x-auth-token', getApiToken());
+        requestInit.headers = headers;
+    }
+
+    const response = await nativeFetch(input, requestInit);
+    if (isApiRequest && response.status === 401) {
+        sessionStorage.removeItem(API_TOKEN_STORAGE_KEY);
+        alert('API token was rejected. Enter the current server token and try again.');
+    }
+    return response;
+};
+
 let clients = [];
 let currentClient = null;
 let settings = {};
@@ -944,13 +976,21 @@ async function loadSettings() {
         document.getElementById('s_comp_phone').value = settings.completed_by_phone || '';
 
         // SRFax fields
-        document.getElementById('s_srfax_id').value = settings.srfax_access_id || '';
-        document.getElementById('s_srfax_pwd').value = settings.srfax_access_pwd || '';
+        const srfaxId = document.getElementById('s_srfax_id');
+        const srfaxPwd = document.getElementById('s_srfax_pwd');
+        const intakeqKey = document.getElementById('s_intakeq_key');
+        srfaxId.value = '';
+        srfaxPwd.value = '';
+        srfaxId.placeholder = settings.srfax_access_id_configured ? 'Configured - leave blank to keep' : 'Account #';
+        srfaxPwd.placeholder = settings.srfax_access_pwd_configured ? 'Configured - leave blank to keep' : 'Password';
         document.getElementById('s_srfax_caller').value = settings.srfax_caller_id || '';
         document.getElementById('s_srfax_email').value = settings.srfax_sender_email || '';
 
         // IntakeQ field
-        document.getElementById('s_intakeq_key').value = settings.intakeq_api_key || '';
+        intakeqKey.value = '';
+        intakeqKey.placeholder = settings.intakeq_api_key_configured
+            ? 'Configured - leave blank to keep'
+            : 'Enter your IntakeQ Developer API Key';
 
         // Load MCO directory when settings page opens
         loadMcoDirectory();
@@ -996,7 +1036,7 @@ document.getElementById('settings-form').addEventListener('submit', async (e) =>
         });
         const result = await res.json();
         if (res.ok) {
-            settings = newSettings;
+            await loadSettings();
             alert("Settings saved successfully!");
         } else {
             alert("Error: " + (result.error || "Failed to save settings"));

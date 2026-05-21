@@ -19,6 +19,7 @@ node db.js          # Initialize/reset database (auto-runs on server start)
 
 ### Backend (server.js)
 - Express.js REST API on port 3000
+- `/api/*` routes require an API token. Set `AUTH_FORMS_API_TOKEN` for a stable token; if omitted, the server generates a one-session token and prints it at startup. The browser stores the token in `sessionStorage` after prompting.
 - SQLite database via `db.js` module
 - PDF generation pipeline at `POST /api/generate-auth` (~line 396):
   1. EJS template (`views/form_template.ejs`) rendered to HTML
@@ -33,6 +34,7 @@ node db.js          # Initialize/reset database (auto-runs on server start)
 ### External Integrations
 - **SRFax** (`srfax.js`): Fax delivery service. Requires credentials in settings table (`srfax_access_id`, `srfax_access_pwd`, `srfax_caller_id`). **Number format**: CallerID must be exactly 10 digits; recipient ToNumber must be exactly 11 digits (country code + 10 digits, e.g. `15021234567`).
 - **IntakeQ**: EMR integration for fetching clinical notes and uploading generated PDFs. API key stored in settings (`intakeq_api_key`). The `intakeq_client_id` on a `clients` row is auto-populated on first successful upload/search and cached for subsequent calls.
+- Settings secrets are write-only over the API. `GET /api/settings` returns configured-state booleans for SRFax/IntakeQ secret fields, and blank secret values on `PUT /api/settings` preserve the existing stored secrets.
 
 ### Frontend (public/)
 - Single-page vanilla JS application (`js/app.js`)

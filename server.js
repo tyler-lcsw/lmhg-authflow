@@ -6,6 +6,7 @@ const ejs = require('ejs');
 const puppeteer = require('puppeteer');
 const { PDFDocument } = require('pdf-lib');
 const fs = require('fs');
+const crypto = require('crypto');
 
 const db = require('./db');
 const { sendFax, checkFaxStatus } = require('./srfax');
@@ -19,6 +20,7 @@ const {
 
 const app = express();
 const port = 3000;
+const apiToken = process.env.AUTH_FORMS_API_TOKEN || crypto.randomBytes(24).toString('hex');
 
 const CLIENT_SELECT = `
     SELECT
@@ -72,6 +74,43 @@ function firstConfiguredValue(...values) {
         if (text) return text;
     }
     return '';
+}
+
+function providedSecretValue(value) {
+    const text = String(value || '').trim();
+    return text ? text : null;
+}
+
+function serializeSettings(row = {}) {
+    const copy = Object.assign({}, row);
+    for (const key of ['srfax_access_id', 'srfax_access_pwd', 'intakeq_api_key']) {
+        copy[`${key}_configured`] = Boolean(copy[key]);
+        delete copy[key];
+    }
+    return copy;
+}
+
+function tokensMatch(provided, expected) {
+    const providedBuffer = Buffer.from(String(provided || ''));
+    const expectedBuffer = Buffer.from(String(expected || ''));
+    return providedBuffer.length === expectedBuffer.length &&
+        crypto.timingSafeEqual(providedBuffer, expectedBuffer);
+}
+
+function requireApiToken(req, res, next) {
+    if (process.env.AUTH_FORMS_TEST_BYPASS_AUTH === '1') return next();
+
+    const headerToken = req.get('x-auth-token') || '';
+    const authHeader = req.get('authorization') || '';
+    const bearerToken = authHeader.toLowerCase().startsWith('bearer ')
+        ? authHeader.slice(7).trim()
+        : '';
+    const provided = headerToken || bearerToken;
+
+    if (!tokensMatch(provided, apiToken)) {
+        return res.status(401).json({ error: "API token required" });
+    }
+    return next();
 }
 
 function applyServicingFacilityDefaults(formData, settings = {}) {
@@ -261,6 +300,7 @@ app.use(cors());
 app.use(express.json());
 app.use(createRequestTracer());
 app.use(express.static('public')); // serve frontend
+app.use('/api', requireApiToken);
 app.set('view engine', 'ejs');
 
 // Multer setup for handling PDF uploads
@@ -577,7 +617,7 @@ app.put('/api/pcp-directory/:pcpId/clients/:clientId', async (req, res) => {
 app.get('/api/settings', (req, res) => {
     db.get("SELECT * FROM settings WHERE id = 1", [], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(row || {});
+        res.json(serializeSettings(row || {}));
     });
 });
 
@@ -599,27 +639,37 @@ app.put('/api/settings', (req, res) => {
     ]);
     if (validationError) return res.status(400).json({ error: validationError });
 
-    const stmt = db.prepare(`
-        UPDATE settings SET
-            requesting_provider=?, req_provider_phone=?, req_provider_npi=?, req_provider_fax=?,
-            completed_by=?, completed_by_phone=?,
-            srfax_access_id=?, srfax_access_pwd=?, srfax_caller_id=?, srfax_sender_email=?,
-            intakeq_api_key=?
-        WHERE id=1
-    `);
-    stmt.run(
-        [
-            data.requesting_provider, data.req_provider_phone, data.req_provider_npi, data.req_provider_fax,
-            data.completed_by, data.completed_by_phone,
-            data.srfax_access_id, data.srfax_access_pwd, data.srfax_caller_id, data.srfax_sender_email,
-            data.intakeq_api_key
-        ],
-        function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ changes: this.changes });
+    db.get(
+        "SELECT srfax_access_id, srfax_access_pwd, intakeq_api_key FROM settings WHERE id = 1",
+        [],
+        (readErr, existing = {}) => {
+            if (readErr) return res.status(500).json({ error: readErr.message });
+
+            const stmt = db.prepare(`
+                UPDATE settings SET
+                    requesting_provider=?, req_provider_phone=?, req_provider_npi=?, req_provider_fax=?,
+                    completed_by=?, completed_by_phone=?,
+                    srfax_access_id=?, srfax_access_pwd=?, srfax_caller_id=?, srfax_sender_email=?,
+                    intakeq_api_key=?
+                WHERE id=1
+            `);
+            stmt.run(
+                [
+                    data.requesting_provider, data.req_provider_phone, data.req_provider_npi, data.req_provider_fax,
+                    data.completed_by, data.completed_by_phone,
+                    providedSecretValue(data.srfax_access_id) || existing.srfax_access_id || '',
+                    providedSecretValue(data.srfax_access_pwd) || existing.srfax_access_pwd || '',
+                    data.srfax_caller_id, data.srfax_sender_email,
+                    providedSecretValue(data.intakeq_api_key) || existing.intakeq_api_key || ''
+                ],
+                function (err) {
+                    if (err) return res.status(500).json({ error: err.message });
+                    res.json({ changes: this.changes });
+                }
+            );
+            stmt.finalize();
         }
     );
-    stmt.finalize();
 });
 
 // --- Provider Presets (Still mapped to /api/facilities for now) ---
@@ -1540,6 +1590,10 @@ if (require.main === module) {
     installProcessErrorLogging();
     app.listen(port, () => {
         console.log(`Auth Forms app listening at http://localhost:${port}`);
+        if (!process.env.AUTH_FORMS_API_TOKEN) {
+            console.log(`API token for this session: ${apiToken}`);
+            console.log('Set AUTH_FORMS_API_TOKEN to use a stable token.');
+        }
         console.log(`Trace log: ${DEFAULT_LOG_FILE}`);
     });
 }

@@ -10,9 +10,20 @@ const path = require('path');
  * an empty test database. Callers are responsible for seeding whatever
  * rows their tests need (settings, clients, auth_requests, etc).
  */
-async function startTestServer() {
+async function startTestServer(options = {}) {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-forms-test-'));
+    const previousDbPath = process.env.DB_PATH;
+    const previousApiToken = process.env.AUTH_FORMS_API_TOKEN;
+    const previousBypassAuth = process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
+
     process.env.DB_PATH = path.join(tmpDir, 'test.sqlite');
+    if (options.requireAuth) {
+        process.env.AUTH_FORMS_API_TOKEN = options.apiToken || 'test-api-token';
+        delete process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
+    } else {
+        process.env.AUTH_FORMS_TEST_BYPASS_AUTH = '1';
+        delete process.env.AUTH_FORMS_API_TOKEN;
+    }
 
     // Invalidate module cache so a fresh server+db is created per test server
     delete require.cache[require.resolve('../../db')];
@@ -34,11 +45,20 @@ async function startTestServer() {
         baseUrl,
         db,
         tmpDir,
+        apiToken: process.env.AUTH_FORMS_API_TOKEN,
+        authHeaders: process.env.AUTH_FORMS_API_TOKEN
+            ? { 'x-auth-token': process.env.AUTH_FORMS_API_TOKEN }
+            : {},
         async close() {
             await new Promise(r => server.close(r));
             await new Promise(r => db.close(r));
             try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
-            delete process.env.DB_PATH;
+            if (previousDbPath === undefined) delete process.env.DB_PATH;
+            else process.env.DB_PATH = previousDbPath;
+            if (previousApiToken === undefined) delete process.env.AUTH_FORMS_API_TOKEN;
+            else process.env.AUTH_FORMS_API_TOKEN = previousApiToken;
+            if (previousBypassAuth === undefined) delete process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
+            else process.env.AUTH_FORMS_TEST_BYPASS_AUTH = previousBypassAuth;
         }
     };
 }

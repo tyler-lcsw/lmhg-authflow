@@ -99,16 +99,40 @@ a { color: var(--brand); }
 
 <script>
 const API = '/api';
+const API_TOKEN_STORAGE_KEY = 'authFormsApiToken';
+
+function getApiToken() {
+    let token = sessionStorage.getItem(API_TOKEN_STORAGE_KEY) || '';
+    while (!token) {
+        token = window.prompt('Enter the Auth Forms API token') || '';
+        token = token.trim();
+    }
+    sessionStorage.setItem(API_TOKEN_STORAGE_KEY, token);
+    return token;
+}
 
 function show(elId, ok, data) {
     const el = document.getElementById(elId);
     const cls = ok ? 'status-ok' : 'status-err';
     const prefix = ok ? '✓ OK' : '✗ ERROR';
-    el.innerHTML = `<span class="${cls}">${prefix}</span>\n` + JSON.stringify(data, null, 2);
+    el.replaceChildren();
+    const status = document.createElement('span');
+    status.className = cls;
+    status.textContent = prefix;
+    el.appendChild(status);
+    el.appendChild(document.createTextNode(`\n${JSON.stringify(data, null, 2)}`));
 }
 
 async function call(url, init = {}) {
-    const resp = await fetch(url, init);
+    const requestInit = Object.assign({}, init);
+    const headers = new Headers(requestInit.headers || {});
+    headers.set('x-auth-token', getApiToken());
+    requestInit.headers = headers;
+
+    const resp = await fetch(url, requestInit);
+    if (resp.status === 401) {
+        sessionStorage.removeItem(API_TOKEN_STORAGE_KEY);
+    }
     const text = await resp.text();
     let parsed;
     try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { raw: text }; }
