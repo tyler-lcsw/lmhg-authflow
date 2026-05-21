@@ -6,6 +6,8 @@ const dbPath = process.env.DB_PATH || path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath);
 
 db.serialize(() => {
+    db.run('PRAGMA foreign_keys = ON');
+
     // Clients table
     db.run(`
         CREATE TABLE IF NOT EXISTS clients (
@@ -167,6 +169,39 @@ db.serialize(() => {
           AND COALESCE(TRIM(pcp), '') <> ''
           AND COALESCE(TRIM(pcp_phone), '') <> ''
           AND COALESCE(TRIM(pcp_npi), '') <> ''
+    `);
+    db.run(`
+        UPDATE clients
+        SET primary_care_provider_id = (
+            SELECT MIN(id)
+            FROM primary_care_providers
+            WHERE TRIM(primary_care_providers.npi) = TRIM(clients.pcp_npi)
+        )
+        WHERE primary_care_provider_id IS NULL
+          AND COALESCE(TRIM(pcp_npi), '') <> ''
+    `);
+    db.run(`
+        UPDATE clients
+        SET primary_care_provider_id = (
+            SELECT MIN(id)
+            FROM primary_care_providers p
+            WHERE TRIM(p.npi) = TRIM((
+                SELECT npi FROM primary_care_providers current_pcp WHERE current_pcp.id = clients.primary_care_provider_id
+            ))
+        )
+        WHERE primary_care_provider_id IS NOT NULL
+    `);
+    db.run(`
+        DELETE FROM primary_care_providers
+        WHERE id NOT IN (
+            SELECT MIN(id)
+            FROM primary_care_providers
+            GROUP BY TRIM(npi)
+        )
+    `);
+    db.run(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_primary_care_providers_npi
+        ON primary_care_providers(npi)
     `);
 
     db.run(`

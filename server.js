@@ -136,6 +136,10 @@ function getDb(sql, params = []) {
     });
 }
 
+async function rollbackQuietly() {
+    try { await runDb('ROLLBACK'); } catch {}
+}
+
 const TERMINAL_FAX_STATUSES = new Set(['Sent', 'Success', 'Failed', 'Error']);
 
 function isImmutableAuthorization(auth) {
@@ -172,17 +176,30 @@ async function findOrCreatePrimaryCareProvider(data) {
         npi: String(data.pcp_npi || '').trim()
     };
 
-    await runDb(
-        "INSERT OR IGNORE INTO primary_care_providers (name, phone, npi) VALUES (?, ?, ?)",
+    const existingByNpi = await getDb(
+        "SELECT id, name, phone, npi FROM primary_care_providers WHERE npi = ?",
+        [provider.npi]
+    );
+    if (existingByNpi) {
+        if (existingByNpi.name !== provider.name || existingByNpi.phone !== provider.phone) {
+            await runDb(
+                "UPDATE primary_care_providers SET name = ?, phone = ? WHERE id = ?",
+                [provider.name, provider.phone, existingByNpi.id]
+            );
+            await runDb(
+                "UPDATE clients SET pcp = ?, pcp_phone = ?, pcp_npi = ? WHERE primary_care_provider_id = ?",
+                [provider.name, provider.phone, provider.npi, existingByNpi.id]
+            );
+        }
+        return { id: existingByNpi.id, ...provider };
+    }
+
+    const result = await runDb(
+        "INSERT INTO primary_care_providers (name, phone, npi) VALUES (?, ?, ?)",
         [provider.name, provider.phone, provider.npi]
     );
 
-    const row = await getDb(
-        "SELECT id FROM primary_care_providers WHERE name = ? AND phone = ? AND npi = ?",
-        [provider.name, provider.phone, provider.npi]
-    );
-
-    return { id: row.id, ...provider };
+    return { id: result.lastID, ...provider };
 }
 
 async function getIntakeqApiKey() {
@@ -232,7 +249,43 @@ const storage = multer.diskStorage({
         cb(null, Date.now() + '-' + file.originalname);
     }
 });
-const upload = multer({ storage: storage });
+function isPdfUpload(file) {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    return ext === '.pdf' && file.mimetype === 'application/pdf';
+}
+
+const upload = multer({
+    storage,
+    limits: { fileSize: 20 * 1024 * 1024, files: 10 },
+    fileFilter: (req, file, cb) => {
+        if (!isPdfUpload(file)) {
+            const err = new Error("Attachments must be PDF files.");
+            err.status = 400;
+            return cb(err);
+        }
+        cb(null, true);
+    }
+});
+
+function cleanupUploadedFiles(files = []) {
+    for (const file of files) {
+        if (file && file.path && fs.existsSync(file.path)) {
+            try { fs.unlinkSync(file.path); } catch {}
+        }
+    }
+}
+
+function uploadAuthAttachments(req, res, next) {
+    upload.array('attachments', 10)(req, res, (err) => {
+        if (!err) return next();
+        cleanupUploadedFiles(req.files);
+        const status = err.status || (err.code === 'LIMIT_FILE_SIZE' ? 400 : 500);
+        const message = err.code === 'LIMIT_FILE_SIZE'
+            ? "Attachments must be 20 MB or smaller."
+            : err.message;
+        return res.status(status).json({ error: message });
+    });
+}
 
 // Ensure directories exist
 if (!fs.existsSync('uploads')) fs.mkdirSync('uploads');
@@ -311,9 +364,25 @@ app.put('/api/clients/:id', async (req, res) => {
 });
 
 app.delete('/api/clients/:id', (req, res) => {
-    db.run("DELETE FROM clients WHERE id = ?", [req.params.id], function (err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ changes: this.changes });
+    db.all("SELECT pdf_path FROM auth_requests WHERE client_id = ?", [req.params.id], async (selectErr, rows = []) => {
+        if (selectErr) return res.status(500).json({ error: selectErr.message });
+
+        try {
+            await runDb('BEGIN');
+            await runDb("DELETE FROM auth_requests WHERE client_id = ?", [req.params.id]);
+            const result = await runDb("DELETE FROM clients WHERE id = ?", [req.params.id]);
+            await runDb('COMMIT');
+
+            for (const row of rows) {
+                if (row.pdf_path && fs.existsSync(row.pdf_path)) {
+                    try { fs.unlinkSync(row.pdf_path); } catch {}
+                }
+            }
+            res.json({ changes: result.changes });
+        } catch (err) {
+            await rollbackQuietly();
+            res.status(500).json({ error: err.message });
+        }
     });
 });
 
@@ -392,6 +461,10 @@ app.post('/api/pcp-directory', async (req, res) => {
 
     const data = cleanPcpDirectoryData(req.body);
     try {
+        const existing = await getDb("SELECT id FROM primary_care_providers WHERE npi = ?", [data.npi]);
+        if (existing) {
+            return res.status(409).json({ error: "A PCP with this NPI already exists." });
+        }
         const result = await runDb(
             "INSERT INTO primary_care_providers (name, phone, npi) VALUES (?, ?, ?)",
             [data.name, data.phone, data.npi]
@@ -411,6 +484,14 @@ app.put('/api/pcp-directory/:id', async (req, res) => {
 
     const data = cleanPcpDirectoryData(req.body);
     try {
+        const duplicate = await getDb(
+            "SELECT id FROM primary_care_providers WHERE npi = ? AND id <> ?",
+            [data.npi, req.params.id]
+        );
+        if (duplicate) {
+            return res.status(409).json({ error: "A PCP with this NPI already exists." });
+        }
+        await runDb('BEGIN');
         const result = await runDb(
             "UPDATE primary_care_providers SET name = ?, phone = ?, npi = ? WHERE id = ?",
             [data.name, data.phone, data.npi, req.params.id]
@@ -419,10 +500,12 @@ app.put('/api/pcp-directory/:id', async (req, res) => {
             "UPDATE clients SET pcp = ?, pcp_phone = ?, pcp_npi = ? WHERE primary_care_provider_id = ?",
             [data.name, data.phone, data.npi, req.params.id]
         );
+        await runDb('COMMIT');
         res.json({ changes: result.changes });
     } catch (err) {
+        await rollbackQuietly();
         if (err.code === 'SQLITE_CONSTRAINT') {
-            return res.status(409).json({ error: "A PCP with this name, phone, and NPI already exists." });
+            return res.status(409).json({ error: "A PCP with this NPI already exists." });
         }
         res.status(500).json({ error: err.message });
     }
@@ -785,7 +868,7 @@ app.put('/api/auth-requests/:id', (req, res) => {
     }
 });
 
-app.post('/api/generate-auth', upload.array('attachments', 10), async (req, res) => {
+app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
     try {
         const formDataStr = req.body.formData;
         if (!formDataStr) {
@@ -953,6 +1036,7 @@ app.post('/api/generate-auth', upload.array('attachments', 10), async (req, res)
         res.download(filepath);
 
     } catch (err) {
+        cleanupUploadedFiles(req.files);
         console.error("PDF Generation Error:", err);
         res.status(500).json({ error: err.message });
     }

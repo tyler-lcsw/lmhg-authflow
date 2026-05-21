@@ -46,6 +46,23 @@ test('authorization workflow presents numbered steps and queues forward progress
     assert.match(js, /btn-auth-next-actions/);
 });
 
+test('authorization tab headers use the same form-validity gate as the Step 2 button', () => {
+    const js = fs.readFileSync(path.join(__dirname, '../../public/js/app.js'), 'utf8');
+
+    assert.match(js, /function canEnterAuthStep\(/);
+    assert.match(js, /form\.checkValidity\(\)/);
+    assert.match(
+        js,
+        /header\.addEventListener\('click'[\s\S]*?if \(canEnterAuthStep\(targetTabId\)\) setAuthStep\(targetTabId\)/,
+        'tab header clicks must use the shared guided-flow gate'
+    );
+    assert.match(
+        js,
+        /btn-auth-next-attachments'[\s\S]*?if \(canEnterAuthStep\('tab-attachments'\)\) setAuthStep\('tab-attachments'\)/,
+        'Step 2 button must use the same guided-flow gate as tab headers'
+    );
+});
+
 test('final authorization screen separates PDF generation from optional faxing steps', () => {
     const html = fs.readFileSync(path.join(__dirname, '../../public/index.html'), 'utf8');
     const css = fs.readFileSync(path.join(__dirname, '../../public/css/style.css'), 'utf8');

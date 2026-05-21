@@ -62,6 +62,29 @@ test('PCP directory requires name, phone, and NPI', async () => {
     }
 });
 
+test('PCP directory rejects duplicate NPI even when name and phone differ', async () => {
+    const srv = await startTestServer();
+    try {
+        const created = await callJson(srv.baseUrl, '/api/pcp-directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Family Clinic', phone: '502-555-0101', npi: '1234567890' })
+        });
+        assert.equal(created.status, 200);
+
+        const duplicate = await callJson(srv.baseUrl, '/api/pcp-directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Renamed Clinic', phone: '502-555-0199', npi: '1234567890' })
+        });
+
+        assert.equal(duplicate.status, 409);
+        assert.match(duplicate.body.error, /NPI/i);
+    } finally {
+        await srv.close();
+    }
+});
+
 test('PCP directory prevents deleting providers assigned to clients', async () => {
     const srv = await startTestServer();
     try {

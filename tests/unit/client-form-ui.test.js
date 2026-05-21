@@ -39,3 +39,18 @@ test('existing PCP select displays only provider names while retaining full matc
     assert.match(appJs, /normalizeDigits\(pcp\.phone\) === phone/);
     assert.match(appJs, /normalizeDigits\(pcp\.npi\) === npi/);
 });
+
+test('client and PCP table rendering uses textContent for user-provided values', () => {
+    assert.match(appJs, /function appendTextCell\(/);
+    assert.match(appJs, /cell\.textContent = value/);
+    assert.doesNotMatch(appJs, /\$\{client\.name\}/);
+    assert.doesNotMatch(appJs, /\$\{pcp\.name\}/);
+});
+
+test('Provider Preset wording is used for the directories view and form', () => {
+    assert.match(indexHtml, /Manage Provider Presets/);
+    assert.match(indexHtml, /Back to Presets/);
+    assert.match(indexHtml, /Provider Preset Details/);
+    assert.doesNotMatch(indexHtml, /Manage Facilities/);
+    assert.doesNotMatch(indexHtml, /New Facility/);
+});

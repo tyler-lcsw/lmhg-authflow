@@ -181,11 +181,24 @@ function requireAuthStep(targetTabId) {
     return true;
 }
 
+function canEnterAuthStep(targetTabId) {
+    const form = document.getElementById('auth-generate-form');
+    if (targetTabId === 'tab-attachments' || targetTabId === 'tab-actions') {
+        if (form && !form.checkValidity()) {
+            setAuthStep('tab-form');
+            setAuthFlowError('Finish required form data before moving to attachments.');
+            setTimeout(() => form.reportValidity(), 50);
+            return false;
+        }
+    }
+    return requireAuthStep(targetTabId);
+}
+
 // Tab Switching Logic
 document.querySelectorAll('.tab-header').forEach(header => {
     header.addEventListener('click', (e) => {
         const targetTabId = e.currentTarget.dataset.tab;
-        if (requireAuthStep(targetTabId)) setAuthStep(targetTabId);
+        if (canEnterAuthStep(targetTabId)) setAuthStep(targetTabId);
     });
 });
 
@@ -243,30 +256,80 @@ async function loadClients() {
 
 function renderClientsTable(data) {
     const tbody = document.querySelector('#clients-table tbody');
-    tbody.innerHTML = '';
+    tbody.replaceChildren();
 
     if (data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No clients found. Add one to get started.</td></tr>';
+        appendEmptyRow(tbody, 5, 'No clients found. Add one to get started.');
         return;
     }
 
     data.forEach(client => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="font-weight:600;">${client.name}</td>
-            <td>${client.medicaid_id || '--'}</td>
-            <td>${client.mco_id || '--'}</td>
-            <td>${client.dob || '--'}</td>
-            <td>
-                <div style="display:flex; gap:4px;">
-                    <button class="btn btn-ghost" title="View" onclick="viewClient(${client.id})"><i class="ph ph-eye"></i></button>
-                    <button class="btn btn-ghost" title="Edit" onclick="editClient(${client.id})"><i class="ph ph-pencil-simple"></i></button>
-                    <button class="btn btn-ghost" title="Delete" style="color:var(--danger);" onclick="deleteClient(${client.id})"><i class="ph ph-trash"></i></button>
-                </div>
-            </td>
-        `;
+        appendTextCell(tr, client.name || '--', { fontWeight: '600' });
+        appendTextCell(tr, client.medicaid_id || '--');
+        appendTextCell(tr, client.mco_id || '--');
+        appendTextCell(tr, client.dob || '--');
+        const actions = appendActionsCell(tr);
+        actions.appendChild(createIconButton('View', 'ph ph-eye', () => viewClient(client.id)));
+        actions.appendChild(createIconButton('Edit', 'ph ph-pencil-simple', () => editClient(client.id)));
+        actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteClient(client.id), { danger: true }));
         tbody.appendChild(tr);
     });
+}
+
+function appendEmptyRow(tbody, colspan, message) {
+    const tr = document.createElement('tr');
+    const td = document.createElement('td');
+    td.colSpan = colspan;
+    td.style.textAlign = 'center';
+    td.style.color = '#666';
+    td.textContent = message;
+    tr.appendChild(td);
+    tbody.appendChild(tr);
+}
+
+function appendTextCell(row, value, styles = {}) {
+    const cell = document.createElement('td');
+    cell.textContent = value == null || value === '' ? '--' : String(value);
+    Object.assign(cell.style, styles);
+    row.appendChild(cell);
+    return cell;
+}
+
+function appendActionsCell(row) {
+    const cell = document.createElement('td');
+    const wrap = document.createElement('div');
+    wrap.style.display = 'flex';
+    wrap.style.gap = '4px';
+    wrap.style.alignItems = 'center';
+    cell.appendChild(wrap);
+    row.appendChild(cell);
+    return wrap;
+}
+
+function createIconButton(title, iconClass, onClick, options = {}) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn btn-ghost';
+    button.title = title;
+    if (options.danger) button.style.color = 'var(--danger)';
+    const icon = document.createElement('i');
+    icon.className = iconClass;
+    button.appendChild(icon);
+    if (options.text) {
+        button.appendChild(document.createTextNode(` ${options.text}`));
+    }
+    button.addEventListener('click', onClick);
+    return button;
+}
+
+function escapeHtml(value) {
+    return String(value == null ? '' : value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 async function ensurePcpDirectoryLoaded() {
@@ -420,10 +483,10 @@ async function loadFaxLog() {
 function renderFaxLogTable(data) {
     const tbody = document.getElementById('fax-log-body');
     if (!tbody) return;
-    tbody.innerHTML = '';
+    tbody.replaceChildren();
 
     if (!Array.isArray(data) || data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No fax history found.</td></tr>';
+        appendEmptyRow(tbody, 5, 'No fax history found.');
         return;
     }
 
@@ -442,20 +505,19 @@ function renderFaxLogTable(data) {
             statusBadge = '<span style="background:#ef4444;color:#fff;padding:4px 10px;border-radius:12px;font-size:0.8rem;font-weight:bold;border:2px solid #7f1d1d;text-transform:uppercase;">🚨 Failed</span>';
             pendingFaxesToPoll.delete(item.id);
         } else {
-            statusBadge = '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;">' + (item.fax_status || 'Unknown') + '</span>';
+            statusBadge = '<span style="background:#94a3b8;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;">' + escapeHtml(item.fax_status || 'Unknown') + '</span>';
             pendingFaxesToPoll.delete(item.id);
         }
 
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="font-weight:600;">${item.client_name}</td>
-            <td>${date}</td>
-            <td>${item.fax_to_number || '--'}</td>
-            <td>${statusBadge}</td>
-            <td>
-                <button class="btn btn-ghost" onclick="viewClient(${item.client_id})"><i class="ph ph-eye"></i> View Client Row</button>
-            </td>
-        `;
+        appendTextCell(tr, item.client_name || '--', { fontWeight: '600' });
+        appendTextCell(tr, date);
+        appendTextCell(tr, item.fax_to_number || '--');
+        const statusCell = document.createElement('td');
+        statusCell.innerHTML = statusBadge;
+        tr.appendChild(statusCell);
+        const actions = appendActionsCell(tr);
+        actions.appendChild(createIconButton('View Client Row', 'ph ph-eye', () => viewClient(item.client_id), { text: 'View Client Row' }));
         tbody.appendChild(tr);
     });
 }
@@ -527,13 +589,14 @@ document.getElementById('btn-sync-intakeq').addEventListener('click', async () =
 
         data.forEach(client => {
             const dob = client.DateOfBirth ? new Date(client.DateOfBirth).toLocaleDateString() : 'N/A';
+            const displayName = client.Name || `${client.FirstName || ''} ${client.LastName || ''}`.trim();
             const li = document.createElement('li');
             li.style.cssText = 'border: 1px solid rgba(99,102,241,0.3); border-radius:8px; padding:10px 14px; margin-bottom:8px; cursor:pointer; display:flex; justify-content:space-between; align-items:center; background:rgba(99,102,241,0.04);';
             li.innerHTML = `
                 <div>
-                    <strong>${client.Name || client.FirstName + ' ' + client.LastName}</strong>
-                    <span style="font-size:0.8rem; color:#666; margin-left:8px;">DOB: ${dob}</span>
-                    ${client.PrimaryInsuranceCompany ? `<span style="font-size:0.8rem; color:#666; margin-left:8px;">Ins: ${client.PrimaryInsuranceCompany}</span>` : ''}
+                    <strong>${escapeHtml(displayName)}</strong>
+                    <span style="font-size:0.8rem; color:#666; margin-left:8px;">DOB: ${escapeHtml(dob)}</span>
+                    ${client.PrimaryInsuranceCompany ? `<span style="font-size:0.8rem; color:#666; margin-left:8px;">Ins: ${escapeHtml(client.PrimaryInsuranceCompany)}</span>` : ''}
                 </div>
                 <button class="btn btn-secondary btn-sm">Import <i class="ph ph-arrow-right"></i></button>
             `;
@@ -607,8 +670,12 @@ function applyIntakeqClientData(client) {
     // Flash notice
     const formTitle = document.getElementById('client-form-title');
     const prev = formTitle.innerText;
-    formTitle.innerHTML = `<span style="color:#22c55e;"><i class="ph ph-check-circle"></i> Data imported from IntakeQ${iqClientId ? ' (IQ#' + iqClientId + ')' : ''}!</span>`;
-    setTimeout(() => { formTitle.innerText = prev; }, 3000);
+    formTitle.style.color = '#22c55e';
+    formTitle.textContent = `Data imported from IntakeQ${iqClientId ? ' (IQ#' + iqClientId + ')' : ''}!`;
+    setTimeout(() => {
+        formTitle.style.color = '';
+        formTitle.innerText = prev;
+    }, 3000);
 }
 
 function setHiddenValue(id, value) {
@@ -983,24 +1050,21 @@ async function loadFacilities() {
 function renderFacilitiesTable(data) {
     const tbody = document.querySelector('#facilities-table tbody');
     if (!tbody) return;
-    tbody.innerHTML = '';
+    tbody.replaceChildren();
 
     if (!Array.isArray(data) || data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="3" style="text-align:center;color:#666;">No facilities found. Add one to get started.</td></tr>';
+        appendEmptyRow(tbody, 4, 'No provider presets found. Add one to get started.');
         return;
     }
 
     data.forEach(fac => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="font-weight:600;">${fac.name}</td>
-            <td>${fac.requesting_provider || '--'}</td>
-            <td>${fac.servicing_provider || '--'}</td>
-            <td>
-                <button class="btn btn-ghost" onclick="editFacility(${fac.id})"><i class="ph ph-pencil-simple"></i> Edit</button>
-                <button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteFacility(${fac.id})"><i class="ph ph-trash"></i></button>
-            </td>
-        `;
+        appendTextCell(tr, fac.name || '--', { fontWeight: '600' });
+        appendTextCell(tr, fac.requesting_provider || '--');
+        appendTextCell(tr, fac.servicing_provider || '--');
+        const actions = appendActionsCell(tr);
+        actions.appendChild(createIconButton('Edit', 'ph ph-pencil-simple', () => editFacility(fac.id), { text: 'Edit' }));
+        actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteFacility(fac.id), { danger: true }));
         tbody.appendChild(tr);
     });
 }
@@ -1008,7 +1072,7 @@ function renderFacilitiesTable(data) {
 document.getElementById('btn-add-facility').addEventListener('click', () => {
     document.getElementById('facility-form').reset();
     document.getElementById('fac_id').value = '';
-    document.getElementById('facility-form-title').innerText = 'New Facility';
+    document.getElementById('facility-form-title').innerText = 'New Provider Preset';
     switchView('facility-form');
 });
 
@@ -1066,7 +1130,7 @@ document.getElementById('facility-form').addEventListener('submit', async (e) =>
 window.editFacility = (id) => {
     const fac = facilities.find(f => f.id === id);
     if (!fac) return;
-    document.getElementById('facility-form-title').innerText = 'Edit Facility';
+    document.getElementById('facility-form-title').innerText = 'Edit Provider Preset';
     document.getElementById('fac_id').value = fac.id;
     document.getElementById('fac_name').value = fac.name || '';
 
@@ -1089,7 +1153,7 @@ window.editFacility = (id) => {
 };
 
 window.deleteFacility = async (id) => {
-    if (!confirm("Are you sure you want to delete this facility profile?")) return;
+    if (!confirm("Are you sure you want to delete this provider preset?")) return;
     try {
         const res = await fetch(`${API_BASE}/facilities/${id}`, { method: 'DELETE' });
         if (res.ok) {
@@ -1125,7 +1189,7 @@ async function loadPcpAssignableClients() {
         clientsForAssignment.forEach(client => {
             const option = document.createElement('option');
             option.value = client.id;
-            option.textContent = `${client.name}${client.dob ? ' | DOB ' + client.dob : ''}`;
+            option.textContent = (client.name || '') + (client.dob ? ' | DOB ' + client.dob : '');
             select.appendChild(option);
         });
     } catch (err) {
@@ -1136,27 +1200,22 @@ async function loadPcpAssignableClients() {
 function renderPcpDirectoryTable(data) {
     const tbody = document.querySelector('#pcp-directory-table tbody');
     if (!tbody) return;
-    tbody.innerHTML = '';
+    tbody.replaceChildren();
 
     if (!Array.isArray(data) || data.length === 0) {
-        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#666;">No PCP records found. Add one to get started.</td></tr>';
+        appendEmptyRow(tbody, 5, 'No PCP records found. Add one to get started.');
         return;
     }
 
     data.forEach(pcp => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td style="font-weight:600;">${pcp.name}</td>
-            <td>${pcp.phone || '--'}</td>
-            <td>${pcp.npi || '--'}</td>
-            <td>${pcp.client_count || 0}</td>
-            <td>
-                <div style="display:flex; gap:4px;">
-                    <button class="btn btn-ghost" title="Edit" onclick="editPcp(${pcp.id})"><i class="ph ph-pencil-simple"></i></button>
-                    <button class="btn btn-ghost" title="Delete" style="color:var(--danger);" onclick="deletePcp(${pcp.id})"><i class="ph ph-trash"></i></button>
-                </div>
-            </td>
-        `;
+        appendTextCell(tr, pcp.name || '--', { fontWeight: '600' });
+        appendTextCell(tr, pcp.phone || '--');
+        appendTextCell(tr, pcp.npi || '--');
+        appendTextCell(tr, pcp.client_count || 0);
+        const actions = appendActionsCell(tr);
+        actions.appendChild(createIconButton('Edit', 'ph ph-pencil-simple', () => editPcp(pcp.id)));
+        actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deletePcp(pcp.id), { danger: true }));
         tbody.appendChild(tr);
     });
 }
@@ -1390,6 +1449,8 @@ async function loadAuthHistory(clientId) {
             const authTitle = `Authorization ${formatDateShort(startDate)} to ${formatDateShort(stopDate)}`;
             const units = formData.units_1 || '0';
             const unitsText = `${units} Units`;
+            const safeAuthTitle = escapeHtml(authTitle);
+            const safeUnitsText = escapeHtml(unitsText);
             
             // Fax status badge
             let badgeHtml = '';
@@ -1435,14 +1496,16 @@ async function loadAuthHistory(clientId) {
 
             const dateLabel = (item.fax_status === 'Sent' || item.fax_status === 'Success') ? 'Date Faxed' : (item.is_draft ? 'Last Saved' : 'Created');
             const displayDate = (item.fax_status === 'Sent' || item.fax_status === 'Success') ? item.fax_sent_date : (item.last_updated || item.date_created);
+            const displayDateTime = new Date(displayDate).toLocaleString();
+            const displayDateShort = new Date(displayDate).toLocaleDateString();
 
             if (list) {
                 list.innerHTML += `
                     <li style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 8px; border-bottom: 1px solid rgba(0,0,0,0.1); margin-bottom: 8px;">
                         <div>
-                            <span style="display:block; font-weight: 500;"><i class="ph ph-file-pdf"></i> ${authTitle}${badgeHtml}</span>
-                            <span style="display:block; font-size: 0.9rem; color: var(--primary); font-weight: 600;">${unitsText}</span>
-                            <span style="font-size:0.8rem;color:#666;">${dateLabel}: ${new Date(displayDate).toLocaleString()}</span>
+                            <span style="display:block; font-weight: 500;"><i class="ph ph-file-pdf"></i> ${safeAuthTitle}${badgeHtml}</span>
+                            <span style="display:block; font-size: 0.9rem; color: var(--primary); font-weight: 600;">${safeUnitsText}</span>
+                            <span style="font-size:0.8rem;color:#666;">${escapeHtml(dateLabel)}: ${escapeHtml(displayDateTime)}</span>
                             <div style="margin-top:4px;">
                                 <label style="font-size:0.75rem; color:#666;">Status: </label>
                                 <select onchange="updateClinicalStatus(${item.id}, this.value)" style="font-size:0.75rem; padding: 2px 4px; border-radius: 4px; border: 1px solid #ddd;">
@@ -1475,9 +1538,9 @@ async function loadAuthHistory(clientId) {
                 tr.innerHTML = `
                     <td style="font-weight:500;">
                         IQ${item.record_number || item.id} ${formatDateShort(startDate)} to ${formatDateShort(stopDate)}
-                        <br><small style="color:var(--primary);">${unitsText}</small>
+                        <br><small style="color:var(--primary);">${safeUnitsText}</small>
                     </td>
-                    <td>${new Date(displayDate).toLocaleDateString()}</td>
+                    <td>${escapeHtml(displayDateShort)}</td>
                     <td>
                         ${badgeHtml}
                     </td>
@@ -1571,18 +1634,11 @@ document.getElementById('auth-generate-form').addEventListener('input', autoSave
 document.getElementById('auth-generate-form').addEventListener('change', autoSaveDraft);
 
 document.getElementById('btn-auth-next-attachments')?.addEventListener('click', () => {
-    const form = document.getElementById('auth-generate-form');
-    if (!form.checkValidity()) {
-        setAuthStep('tab-form');
-        setAuthFlowError('Finish required form data before moving to attachments.');
-        setTimeout(() => form.reportValidity(), 50);
-        return;
-    }
-    setAuthStep('tab-attachments');
+    if (canEnterAuthStep('tab-attachments')) setAuthStep('tab-attachments');
 });
 
 document.getElementById('btn-auth-next-actions')?.addEventListener('click', () => {
-    if (requireAuthStep('tab-actions')) setAuthStep('tab-actions');
+    if (canEnterAuthStep('tab-actions')) setAuthStep('tab-actions');
 });
 
 document.getElementById('btn-save-draft').addEventListener('click', async () => {
@@ -1906,7 +1962,7 @@ function renderFileList() {
     uploadedFiles.forEach((file, index) => {
         const li = document.createElement('li');
         li.innerHTML = `
-            <span><i class="ph ph-file-pdf text-red-500"></i> ${file.name}</span>
+            <span><i class="ph ph-file-pdf text-red-500"></i> ${escapeHtml(file.name)}</span>
             <i class="ph ph-x-circle remove-file" onclick="removeFile(${index})"></i>
         `;
         list.appendChild(li);
@@ -1970,10 +2026,10 @@ document.getElementById('btn-load-intakeq-notes').addEventListener('click', asyn
             
             li.innerHTML = `
                 <label class="custom-checkbox" style="margin:0; width:100%;">
-                    <input type="checkbox" value="${note.Id}" class="intakeq-note-cb"> 
+                    <input type="checkbox" value="${escapeHtml(note.Id)}" class="intakeq-note-cb">
                     <span class="checkmark"></span>
                     <i class="ph ph-file-pdf" style="color:var(--primary); margin: 0 5px;"></i>
-                    <strong>${note.NoteName || 'Treatment Note'}</strong> - ${dateStr} 
+                    <strong>${escapeHtml(note.NoteName || 'Treatment Note')}</strong> - ${escapeHtml(dateStr)}
                     <span style="font-size:0.8rem; color:#666; margin-left:auto;">(Locked)</span>
                 </label>
             `;
@@ -1993,7 +2049,7 @@ document.getElementById('btn-load-intakeq-notes').addEventListener('click', asyn
 
     } catch (err) {
         console.error("IntakeQ Notes Error:", err);
-        list.innerHTML = `<li style="color:var(--danger); font-size:0.9rem;"><i class="ph ph-warning-circle"></i> Error: ${err.message}</li>`;
+        list.innerHTML = `<li style="color:var(--danger); font-size:0.9rem;"><i class="ph ph-warning-circle"></i> Error: ${escapeHtml(err.message)}</li>`;
     } finally {
         loader.style.display = 'none';
         btn.disabled = false;
@@ -2049,11 +2105,11 @@ document.getElementById('btn-load-intakeq-files').addEventListener('click', asyn
             
             li.innerHTML = `
                 <label class="custom-checkbox" style="margin:0; width:100%;">
-                    <input type="checkbox" value="${file.Id}" class="intakeq-file-cb"> 
+                    <input type="checkbox" value="${escapeHtml(file.Id)}" class="intakeq-file-cb">
                     <span class="checkmark"></span>
                     <i class="ph ph-file" style="color:var(--primary); margin: 0 5px;"></i>
-                    <strong>${file.FileName || 'Document'}</strong>
-                    <span style="font-size:0.8rem; color:#666; margin-left:auto;">(${file.ContentType || 'Unknown'})</span>
+                    <strong>${escapeHtml(file.FileName || 'Document')}</strong>
+                    <span style="font-size:0.8rem; color:#666; margin-left:auto;">(${escapeHtml(file.ContentType || 'Unknown')})</span>
                 </label>
             `;
             list.appendChild(li);
@@ -2072,7 +2128,7 @@ document.getElementById('btn-load-intakeq-files').addEventListener('click', asyn
 
     } catch (err) {
         console.error("IntakeQ Files Error:", err);
-        list.innerHTML = `<li style="color:var(--danger); font-size:0.9rem;"><i class="ph ph-warning-circle"></i> Error: ${err.message}</li>`;
+        list.innerHTML = `<li style="color:var(--danger); font-size:0.9rem;"><i class="ph ph-warning-circle"></i> Error: ${escapeHtml(err.message)}</li>`;
     } finally {
         loader.style.display = 'none';
         btn.disabled = false;
@@ -2226,11 +2282,10 @@ function renderMcoTable() {
     }
     mcoDirectory.forEach(entry => {
         const tr = document.createElement('tr');
-        tr.innerHTML = `
-            <td>${entry.mco_name}</td>
-            <td>${entry.fax_number}</td>
-            <td><button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteMcoEntry(${entry.id})"><i class="ph ph-trash"></i></button></td>
-        `;
+        appendTextCell(tr, entry.mco_name || '--');
+        appendTextCell(tr, entry.fax_number || '--');
+        const actions = appendActionsCell(tr);
+        actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteMcoEntry(entry.id), { danger: true }));
         tbody.appendChild(tr);
     });
 }
@@ -2650,7 +2705,7 @@ function showCalendarTooltip(e, events) {
         document.body.appendChild(tooltip);
     }
     
-    tooltip.innerHTML = events.map(ev => `<strong>${ev.type === 'start' ? 'Begins' : 'Expires'}:</strong> ${ev.client}`).join('<br>');
+    tooltip.innerHTML = events.map(ev => `<strong>${ev.type === 'start' ? 'Begins' : 'Expires'}:</strong> ${escapeHtml(ev.client)}`).join('<br>');
     tooltip.style.display = 'block';
     
     const rect = e.target.getBoundingClientRect();
@@ -2683,7 +2738,7 @@ function showCalendarDetails(dateStr, events) {
         li.style.borderLeft = `4px solid ${ev.type === 'start' ? '#22c55e' : '#ef4444'}`;
         li.innerHTML = `
             <div>
-                <strong style="display:block;">${ev.client}</strong>
+                <strong style="display:block;">${escapeHtml(ev.client)}</strong>
                 <span style="font-size:0.8rem; color:#666;">Authorization ${ev.type === 'start' ? 'Begins' : 'Expires'}</span>
             </div>
             <button class="btn btn-ghost btn-sm" onclick="viewClientDetailFromCalendar(${allAuthsForCalendar.find(a => a.id === ev.authId).client_id})"><i class="ph ph-eye"></i> View</button>

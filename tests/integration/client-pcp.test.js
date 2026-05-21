@@ -101,6 +101,78 @@ test('PUT /api/clients relinks to an existing matching primary care provider', a
     }
 });
 
+test('POST /api/clients links to an existing PCP by NPI when name and phone differ', async () => {
+    const srv = await startTestServer();
+    try {
+        const provider = await callJson(srv.baseUrl, '/api/pcp-directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Family Clinic', phone: '502-555-0101', npi: '1234567890' })
+        });
+
+        const created = await callJson(srv.baseUrl, '/api/clients', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(clientPayload({
+                pcp: 'Family Clinic Updated',
+                pcp_phone: '502-555-0199',
+                pcp_npi: '1234567890'
+            }))
+        });
+
+        assert.equal(provider.status, 200);
+        assert.equal(created.status, 200);
+        assert.equal(created.body.primary_care_provider_id, provider.body.id);
+        assert.equal(await countProviders(srv.db), 1);
+
+        const client = await callJson(srv.baseUrl, `/api/clients/${created.body.id}`);
+        assert.equal(client.body.primary_care_provider_id, provider.body.id);
+        assert.equal(client.body.pcp, 'Family Clinic Updated');
+        assert.equal(client.body.pcp_phone, '1 (502) 555-0199');
+        assert.equal(client.body.pcp_npi, '1234567890');
+    } finally {
+        await srv.close();
+    }
+});
+
+test('PUT /api/clients links to an existing PCP by NPI when name and phone differ', async () => {
+    const srv = await startTestServer();
+    try {
+        const provider = await callJson(srv.baseUrl, '/api/pcp-directory', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: 'Family Clinic', phone: '502-555-0101', npi: '1234567890' })
+        });
+        const created = await callJson(srv.baseUrl, '/api/clients', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(clientPayload({
+                pcp: 'Other Provider',
+                pcp_phone: '502-555-0199',
+                pcp_npi: '2222222222'
+            }))
+        });
+
+        const update = await callJson(srv.baseUrl, `/api/clients/${created.body.id}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(clientPayload({
+                pcp: 'Family Clinic Updated',
+                pcp_phone: '502-555-0999',
+                pcp_npi: '1234567890'
+            }))
+        });
+
+        assert.equal(provider.status, 200);
+        assert.equal(created.status, 200);
+        assert.equal(update.status, 200);
+        assert.equal(update.body.primary_care_provider_id, provider.body.id);
+        assert.equal(await countProviders(srv.db), 2);
+    } finally {
+        await srv.close();
+    }
+});
+
 test('PUT /api/clients can link by primary_care_provider_id', async () => {
     const srv = await startTestServer();
     try {
