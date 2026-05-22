@@ -13,6 +13,7 @@ node_modules/
 *.sqlite3-*
 *.db
 *.db-*
+.local-backups/
 
 # Generated output and uploads
 output/

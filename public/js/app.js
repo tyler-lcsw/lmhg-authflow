@@ -1428,6 +1428,124 @@ document.getElementById('btn-new-auth').addEventListener('click', async () => {
     resetAuthStepQueue();
 });
 
+document.getElementById('btn-manual-auth')?.addEventListener('click', () => {
+    openManualAuthModal();
+});
+
+document.getElementById('btn-close-manual-auth')?.addEventListener('click', () => {
+    closeManualAuthModal();
+});
+
+function openManualAuthModal(authId = '', formData = {}, clinicalStatus = 'Granted') {
+    if (!currentClient) {
+        alert("Select or save a client before adding authorization status.");
+        return;
+    }
+
+    const modal = document.getElementById('manual-auth-modal');
+    const form = document.getElementById('manual-auth-form');
+    const error = document.getElementById('manual-auth-error');
+    if (!modal || !form) return;
+
+    form.reset();
+    document.getElementById('manual_auth_id').value = authId || '';
+    document.getElementById('manual_auth_status').value = clinicalStatus || 'Granted';
+    document.getElementById('manual_auth_start').value = formData.start_date_1 || '';
+    document.getElementById('manual_auth_stop').value = formData.stop_date_1 || '';
+    document.getElementById('manual_auth_units').value = formData.units_1 || '';
+    document.getElementById('manual_auth_procedure').value = formData.procedure_code_1 || '';
+    document.getElementById('manual_auth_service').value = formData.requested_service_1 || '';
+    document.getElementById('manual_auth_notes').value = formData.additional_info || '';
+    if (error) {
+        error.textContent = '';
+        error.style.display = 'none';
+    }
+    modal.style.display = 'flex';
+}
+
+function closeManualAuthModal() {
+    const modal = document.getElementById('manual-auth-modal');
+    if (modal) modal.style.display = 'none';
+}
+
+window.editManualAuth = async (id) => {
+    try {
+        const res = await fetch(`${API_BASE}/auth-requests/${id}`);
+        const auth = await res.json();
+        if (!res.ok) throw new Error(auth.error || `Server responded with ${res.status}`);
+
+        let formData = {};
+        try {
+            formData = JSON.parse(auth.form_data || '{}');
+        } catch (err) {
+            console.error("Error parsing manual auth form_data:", err);
+        }
+        openManualAuthModal(auth.id, formData, auth.clinical_status || 'Granted');
+    } catch (err) {
+        alert(err.message || 'Failed to load manual authorization status.');
+    }
+};
+
+document.getElementById('manual-auth-form')?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!currentClient) return;
+
+    const form = e.currentTarget;
+    const error = document.getElementById('manual-auth-error');
+    const formValues = Object.fromEntries(new FormData(form).entries());
+    const authId = formValues.auth_id;
+    const manualFormData = {
+        manual_entry: true,
+        date: new Date().toISOString().slice(0, 10),
+        start_date_1: formValues.start_date,
+        stop_date_1: formValues.stop_date,
+        units_1: formValues.units || '',
+        procedure_code_1: formValues.procedure_code || '',
+        requested_service_1: formValues.requested_service || '',
+        additional_info: formValues.notes || ''
+    };
+
+    try {
+        const res = authId
+            ? await fetch(`${API_BASE}/auth-requests/${authId}`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    clinical_status: formValues.status,
+                    form_data: manualFormData
+                })
+            })
+            : await fetch(`${API_BASE}/auth-requests/manual`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    client_id: currentClient.id,
+                    status: formValues.status,
+                    start_date: formValues.start_date,
+                    stop_date: formValues.stop_date,
+                    units: formValues.units,
+                    procedure_code: formValues.procedure_code,
+                    requested_service: formValues.requested_service,
+                    notes: formValues.notes
+                })
+            });
+
+        if (!res.ok) throw new Error(await readErrorMessage(res));
+        closeManualAuthModal();
+        await loadAuthHistory(currentClient.id);
+        if (document.getElementById('view-calendar')?.classList.contains('active')) {
+            await loadCalendar();
+        }
+    } catch (err) {
+        if (error) {
+            error.textContent = err.message || 'Failed to save authorization status.';
+            error.style.display = 'block';
+        } else {
+            alert(err.message || 'Failed to save authorization status.');
+        }
+    }
+});
+
 function isImmutableAuth(item) {
     return item && Boolean(item.intakeq_uploaded_at);
 }
@@ -1491,6 +1609,7 @@ async function loadAuthHistory(clientId) {
             const unitsText = `${units} Units`;
             const safeAuthTitle = escapeHtml(authTitle);
             const safeUnitsText = escapeHtml(unitsText);
+            const isManualEntry = Boolean(formData.manual_entry);
             
             // Fax status badge
             let badgeHtml = '';
@@ -1525,25 +1644,39 @@ async function loadAuthHistory(clientId) {
             }
 
             // Fax action button
-            let faxBtn = item.is_draft ? '' : `<button class="btn btn-ghost" onclick="openFaxModal(${item.id})"><i class="ph ph-paper-plane-tilt"></i> Fax</button>`;
+            let faxBtn = item.is_draft || isManualEntry ? '' : `<button class="btn btn-ghost" onclick="openFaxModal(${item.id})"><i class="ph ph-paper-plane-tilt"></i> Fax</button>`;
             let refreshBtn = '';
-            if (item.fax_details_id && item.fax_status !== 'Sent' && !item.is_draft) {
+            if (item.fax_details_id && item.fax_status !== 'Sent' && !item.is_draft && !isManualEntry) {
                 refreshBtn = `<button class="btn btn-ghost" onclick="refreshFaxStatus(${item.id})"><i class="ph ph-arrows-clockwise"></i></button>`;
             }
 
             // IntakeQ upload button — only for finalised auths with a PDF
-            let uploadIntakeqBtn = (!item.is_draft) ? `<button class="btn btn-ghost" title="Upload PDF to IntakeQ EMR" onclick="uploadAuthToIntakeq(${item.id})"><i class="ph ph-cloud-arrow-up"></i> IntakeQ</button>` : '';
+            let uploadIntakeqBtn = (!item.is_draft && !isManualEntry) ? `<button class="btn btn-ghost" title="Upload PDF to IntakeQ EMR" onclick="uploadAuthToIntakeq(${item.id})"><i class="ph ph-cloud-arrow-up"></i> IntakeQ</button>` : '';
 
             const dateLabel = (item.fax_status === 'Sent' || item.fax_status === 'Success') ? 'Date Faxed' : (item.is_draft ? 'Last Saved' : 'Created');
             const displayDate = (item.fax_status === 'Sent' || item.fax_status === 'Success') ? item.fax_sent_date : (item.last_updated || item.date_created);
             const displayDateTime = new Date(displayDate).toLocaleString();
             const displayDateShort = new Date(displayDate).toLocaleDateString();
+            const canPreview = !item.is_draft && !formData.manual_entry;
+            const previewBtn = canPreview ? `<button class="btn btn-ghost" onclick="previewAuth(${item.id})"><i class="ph ph-eye"></i> Preview</button>` : '';
+            const previewIconBtn = canPreview ? `<button class="btn btn-ghost" onclick="previewAuth(${item.id})" title="Preview"><i class="ph ph-eye"></i></button>` : '';
+            const manualBadge = isManualEntry ? '<span style="background:#0f766e;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;margin-left:8px;">Manual Entry</span>' : '';
+            const editAction = isManualEntry
+                ? `<button class="btn btn-ghost" onclick="editManualAuth(${item.id})"><i class="ph ph-pencil-simple"></i> Edit</button>`
+                : (immutable || item.fax_status === 'Sent' || item.fax_status === 'Success'
+                    ? `<button class="btn btn-ghost" onclick="copyAuth(${item.id})"><i class="ph ph-copy"></i> Copy</button>`
+                    : `<button class="btn btn-ghost" onclick="editAuth(${item.id})"><i class="ph ph-pencil-simple"></i> Edit</button>`);
+            const editIconAction = isManualEntry
+                ? `<button class="btn btn-ghost" onclick="editManualAuth(${item.id})" title="Edit manual status"><i class="ph ph-pencil-simple"></i></button>`
+                : (immutable || item.fax_status === 'Sent' || item.fax_status === 'Success'
+                    ? `<button class="btn btn-ghost" onclick="copyAuth(${item.id})" title="Copy"><i class="ph ph-copy"></i></button>`
+                    : `<button class="btn btn-ghost" onclick="editAuth(${item.id})" title="Edit"><i class="ph ph-pencil-simple"></i></button>`);
 
             if (list) {
                 list.innerHTML += `
                     <li style="display:flex; justify-content:space-between; align-items:center; padding-bottom: 8px; border-bottom: 1px solid rgba(0,0,0,0.1); margin-bottom: 8px;">
                         <div>
-                            <span style="display:block; font-weight: 500;"><i class="ph ph-file-pdf"></i> ${safeAuthTitle}${badgeHtml}</span>
+                            <span style="display:block; font-weight: 500;"><i class="ph ph-file-pdf"></i> ${safeAuthTitle}${manualBadge}${badgeHtml}</span>
                             <span style="display:block; font-size: 0.9rem; color: var(--primary); font-weight: 600;">${safeUnitsText}</span>
                             <span style="font-size:0.8rem;color:#666;">${escapeHtml(dateLabel)}: ${escapeHtml(displayDateTime)}</span>
                             <div style="margin-top:4px;">
@@ -1557,13 +1690,10 @@ async function loadAuthHistory(clientId) {
                             </div>
                         </div>
                         <div style="display:flex; gap:2px; align-items:center;">
-                            <button class="btn btn-ghost" onclick="previewAuth(${item.id})"><i class="ph ph-eye"></i> Preview</button>
+                            ${previewBtn}
                             ${faxBtn}${refreshBtn}
                             ${uploadIntakeqBtn}
-                            ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
-                                ? `<button class="btn btn-ghost" onclick="copyAuth(${item.id})"><i class="ph ph-copy"></i> Copy</button>`
-                                : `<button class="btn btn-ghost" onclick="editAuth(${item.id})"><i class="ph ph-pencil-simple"></i> Edit</button>`
-                            }
+                            ${editAction}
                             ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
                                 ? '' 
                                 : `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})"><i class="ph ph-trash"></i></button>`
@@ -1577,7 +1707,7 @@ async function loadAuthHistory(clientId) {
                 const tr = document.createElement('tr');
                 tr.innerHTML = `
                     <td style="font-weight:500;">
-                        IQ${item.record_number || item.id} ${formatDateShort(startDate)} to ${formatDateShort(stopDate)}
+                        IQ${item.record_number || item.id} ${formatDateShort(startDate)} to ${formatDateShort(stopDate)} ${isManualEntry ? '<br><small>Manual Entry</small>' : ''}
                         <br><small style="color:var(--primary);">${safeUnitsText}</small>
                     </td>
                     <td>${escapeHtml(displayDateShort)}</td>
@@ -1586,13 +1716,10 @@ async function loadAuthHistory(clientId) {
                     </td>
                     <td>
                         <div style="display:flex; gap:2px; align-items:center;">
-                            <button class="btn btn-ghost" onclick="previewAuth(${item.id})" title="Preview"><i class="ph ph-eye"></i></button>
+                            ${previewIconBtn}
                             ${faxBtn ? `<span title="Fax">${faxBtn}</span>` : ''}
                             ${uploadIntakeqBtn ? `<span title="Upload to IntakeQ">${uploadIntakeqBtn}</span>` : ''}
-                            ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
-                                ? `<button class="btn btn-ghost" onclick="copyAuth(${item.id})" title="Copy"><i class="ph ph-copy"></i></button>`
-                                : `<button class="btn btn-ghost" onclick="editAuth(${item.id})" title="Edit"><i class="ph ph-pencil-simple"></i></button>`
-                            }
+                            ${editIconAction}
                             ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
                                 ? '' 
                                 : `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})" title="Delete"><i class="ph ph-trash"></i></button>`

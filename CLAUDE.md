@@ -13,7 +13,17 @@ npm start           # Production server on port 3000
 npm run dev         # Development with --watch auto-reload
 npm install         # Install dependencies
 node db.js          # Initialize/reset database (auto-runs on server start)
+npm run backup:db   # Copy local database.sqlite to ignored .local-backups/
+npm run clean:generated        # Dry-run generated artifact cleanup
+npm run clean:generated:apply  # Delete generated artifacts while preserving DB files
 ```
+
+## Local Data Safety
+
+- Never delete local SQLite or DB files as part of repository cleanup, security hardening, or generated-artifact cleanup. These files may contain the only local copy of IntakeQ/SRFax settings and client data.
+- Before any maintenance that touches local runtime artifacts, run `npm run backup:db` if `database.sqlite` exists.
+- Use `npm run clean:generated` / `npm run clean:generated:apply` for cleanup. The script preserves `*.sqlite`, `*.sqlite3`, and `*.db` files and reports them as protected local data.
+- `.local-backups/`, `*.sqlite*`, and `*.db*` are ignored so local backups and runtime databases stay out of Git.
 
 ## Architecture
 

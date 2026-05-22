@@ -851,6 +851,56 @@ app.post('/api/save-auth-draft', async (req, res) => {
     }
 });
 
+const MANUAL_AUTH_STATUSES = new Set(['In Review', 'Pending', 'Granted', 'Denied']);
+
+function buildManualAuthFormData(data) {
+    return {
+        manual_entry: true,
+        date: data.date || new Date().toISOString().slice(0, 10),
+        start_date_1: data.start_date,
+        stop_date_1: data.stop_date,
+        units_1: data.units || '',
+        procedure_code_1: data.procedure_code || '',
+        requested_service_1: data.requested_service || '',
+        additional_info: data.notes || ''
+    };
+}
+
+function validateManualAuthPayload(data) {
+    if (!data.client_id) return "Client ID is required";
+    if (!data.start_date || !data.stop_date) return "Start date and stop date are required";
+    if (!MANUAL_AUTH_STATUSES.has(data.status)) return "A valid authorization status is required";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(data.start_date) || !/^\d{4}-\d{2}-\d{2}$/.test(data.stop_date)) {
+        return "Start date and stop date must use YYYY-MM-DD format";
+    }
+    if (data.stop_date < data.start_date) return "Stop date must be on or after start date";
+    return null;
+}
+
+app.post('/api/auth-requests/manual', async (req, res) => {
+    const data = req.body || {};
+    const validationError = validateManualAuthPayload(data);
+    if (validationError) return res.status(400).json({ error: validationError });
+
+    try {
+        const client = await getDb("SELECT id FROM clients WHERE id = ?", [data.client_id]);
+        if (!client) return res.status(404).json({ error: "Client not found" });
+
+        const formDataStr = JSON.stringify(buildManualAuthFormData(data));
+        const num = await getNextRecordNumber();
+        const result = await runDb(
+            `INSERT INTO auth_requests (
+                client_id, form_data, is_draft, last_updated, record_number, clinical_status
+            ) VALUES (?, ?, 0, datetime('now'), ?, ?)`,
+            [data.client_id, formDataStr, num, data.status]
+        );
+
+        res.json({ id: result.lastID, record_number: num, success: true });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.get('/api/auth-requests/:id', (req, res) => {
     db.get("SELECT * FROM auth_requests WHERE id = ?", [req.params.id], (err, row) => {
         if (err) return res.status(500).json({ error: err.message });

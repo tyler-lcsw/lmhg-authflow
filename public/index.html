@@ -380,6 +380,8 @@
                         <div class="client-actions">
                             <button class="btn btn-secondary" id="btn-edit-client"><i class="ph ph-pencil-simple"></i>
                                 Edit Details</button>
+                            <button class="btn btn-secondary" id="btn-manual-auth"><i class="ph ph-calendar-plus"></i>
+                                Add Auth Status</button>
                             <button class="btn btn-primary" id="btn-new-auth"><i class="ph ph-file-plus"></i> New Auth
                                 Request</button>
                         </div>
@@ -962,6 +964,60 @@
             </div>
             <div style="flex:1;">
                 <iframe id="preview-iframe" style="width:100%; height:100%; border:none;"></iframe>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Authorization Status Modal -->
+    <div id="manual-auth-modal" class="loading-overlay" style="display:none; background: rgba(15,23,42,0.55); align-items:center; justify-content:center;">
+        <div class="card glass-card" style="width:min(640px, calc(100vw - 32px)); background:#fff;">
+            <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                <h3><i class="ph ph-calendar-plus"></i> Manual Authorization Status</h3>
+                <button class="btn btn-ghost btn-sm" type="button" id="btn-close-manual-auth"><i class="ph ph-x"></i></button>
+            </div>
+            <div class="card-body">
+                <form id="manual-auth-form" class="modern-form">
+                    <input type="hidden" name="auth_id" id="manual_auth_id">
+                    <div class="form-grid">
+                        <div class="form-group">
+                            <label>Status</label>
+                            <select name="status" id="manual_auth_status" class="modern-select" required>
+                                <option value="Granted">Granted</option>
+                                <option value="Denied">Denied</option>
+                                <option value="Pending">Pending</option>
+                                <option value="In Review">In Review</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Start Date</label>
+                            <input type="date" name="start_date" id="manual_auth_start" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Stop Date</label>
+                            <input type="date" name="stop_date" id="manual_auth_stop" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Units</label>
+                            <input type="text" name="units" id="manual_auth_units">
+                        </div>
+                        <div class="form-group">
+                            <label>Procedure Code</label>
+                            <input type="text" name="procedure_code" id="manual_auth_procedure">
+                        </div>
+                        <div class="form-group">
+                            <label>Service</label>
+                            <input type="text" name="requested_service" id="manual_auth_service">
+                        </div>
+                        <div class="form-group col-span-2">
+                            <label>Notes</label>
+                            <textarea name="notes" id="manual_auth_notes" rows="3" class="modern-textarea"></textarea>
+                        </div>
+                    </div>
+                    <div id="manual-auth-error" style="display:none; color:var(--danger); margin-top:12px;"></div>
+                    <div class="form-actions mt-4" style="text-align:right;">
+                        <button type="submit" class="btn btn-primary"><i class="ph ph-floppy-disk"></i> Save Status</button>
+                    </div>
+                </form>
             </div>
         </div>
     </div>
