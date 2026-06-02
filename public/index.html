@@ -5,12 +5,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Auth Forms Generator</title>
-    <!-- Modern Font: Inter -->
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Icon Font: Phosphor Icons -->
-    <script src="https://unpkg.com/@phosphor-icons/web"></script>
     <link rel="stylesheet" href="css/style.css">
 </head>
 
@@ -37,7 +31,8 @@
                 </li>
                 <li><a href="#" class="nav-link" data-view="pcp-directory"><i class="ph ph-stethoscope"></i> PCP Directory</a></li>
                 <li><a href="#" class="nav-link" data-view="calendar"><i class="ph ph-calendar"></i> Calendar</a></li>
-                <li><a href="#" class="nav-link" data-view="settings"><i class="ph ph-gear"></i> Settings</a></li>
+                <li><a href="#" class="nav-link" data-view="preferences" data-feature="preferences"><i class="ph ph-sliders-horizontal"></i> Preferences</a></li>
+                <li><a href="#" class="nav-link" data-view="diagnostics" data-feature="diagnostics"><i class="ph ph-pulse"></i> Diagnostics</a></li>
             </ul>
 
             <div class="sidebar-footer">
@@ -399,9 +394,8 @@
                     </div>
                 </section>
 
-                <!-- VIEW: Settings / Provider Info -->
-                <section id="view-settings" class="view">
-                    <!-- Preferences Card -->
+                <!-- VIEW: Preferences -->
+                <section id="view-preferences" class="view" data-feature="preferences">
                     <div class="card glass-card mb-4">
                         <div class="card-header">
                             <h3><i class="ph ph-sliders-horizontal"></i> Preferences</h3>
@@ -480,9 +474,6 @@
                                             <div class="form-group"><label>Caller ID (10 digits - no country code)</label><input type="tel" id="s_srfax_caller" placeholder="5021234567"></div>
                                             <div class="form-group"><label>Sender Email</label><input type="email" id="s_srfax_email" placeholder="you@example.com"></div>
                                         </div>
-                                        <div class="mt-4 flex-center">
-                                            <button type="button" class="btn btn-secondary" id="btn-test-fax"><i class="ph ph-paper-plane-tilt"></i> Send Test Fax to Caller ID</button>
-                                        </div>
                                     </div>
 
                                     <!-- MCO Fax Directory -->
@@ -517,6 +508,110 @@
                                         Settings</button>
                                 </div>
                             </form>
+                        </div>
+                    </div>
+                </section>
+
+                <!-- VIEW: Diagnostics -->
+                <section id="view-diagnostics" class="view" data-feature="diagnostics">
+                    <div class="diagnostics-grid">
+                        <div class="card glass-card">
+                            <div class="card-header">
+                                <h3><i class="ph ph-pulse"></i> SRFax Diagnostics</h3>
+                            </div>
+                            <div class="card-body">
+                                <div class="diagnostic-status-grid" id="diagnostic-config-status">
+                                    <div class="diagnostic-status-item">
+                                        <span>SRFax Account</span>
+                                        <strong id="diag-srfax-account">Unknown</strong>
+                                    </div>
+                                    <div class="diagnostic-status-item">
+                                        <span>SRFax Password</span>
+                                        <strong id="diag-srfax-password">Unknown</strong>
+                                    </div>
+                                    <div class="diagnostic-status-item">
+                                        <span>Caller ID</span>
+                                        <strong id="diag-srfax-caller">Unknown</strong>
+                                    </div>
+                                    <div class="diagnostic-status-item">
+                                        <span>IntakeQ Key</span>
+                                        <strong id="diag-intakeq-key">Unknown</strong>
+                                    </div>
+                                </div>
+
+                                <div class="diagnostic-actions">
+                                    <button type="button" class="btn btn-secondary" id="btn-run-fax-diagnostics">
+                                        <i class="ph ph-stethoscope"></i> Check SRFax
+                                    </button>
+                                    <button type="button" class="btn btn-secondary" id="btn-test-fax">
+                                        <i class="ph ph-paper-plane-tilt"></i> Send Test Fax
+                                    </button>
+                                </div>
+
+                                <div class="form-grid mt-4">
+                                    <div class="form-group">
+                                        <label>Fax Details ID</label>
+                                        <input type="text" id="diag_fax_id" placeholder="SRFax details ID">
+                                    </div>
+                                    <div class="form-group diagnostic-button-row">
+                                        <button type="button" class="btn btn-secondary" id="btn-check-fax-status">
+                                            <i class="ph ph-magnifying-glass"></i> Check Status
+                                        </button>
+                                        <button type="button" class="btn btn-ghost" id="btn-poll-fax-status">
+                                            <i class="ph ph-arrows-clockwise"></i> Poll
+                                        </button>
+                                    </div>
+                                </div>
+
+                                <pre class="diagnostic-output" id="diagnostic-output" aria-live="polite"></pre>
+                            </div>
+                        </div>
+
+                        <div class="card glass-card">
+                            <div class="card-header">
+                                <h3><i class="ph ph-code"></i> API Interface</h3>
+                            </div>
+                            <div class="card-body">
+                                <form id="api-interface-form" class="modern-form">
+                                    <div class="api-controls">
+                                        <div class="form-group">
+                                            <label>Preset</label>
+                                            <select id="api-preset" class="modern-select">
+                                                <option value="">Custom</option>
+                                                <option value="settings">Settings</option>
+                                                <option value="faxDiagnostics">SRFax Diagnostics</option>
+                                                <option value="sendTestFax">Send Test Fax</option>
+                                                <option value="faxStatus">Fax Status</option>
+                                                <option value="clients">Clients</option>
+                                                <option value="authRequests">Authorization Requests</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group api-method-group">
+                                            <label>Method</label>
+                                            <select id="api-method" class="modern-select">
+                                                <option>GET</option>
+                                                <option>POST</option>
+                                                <option>PUT</option>
+                                                <option>DELETE</option>
+                                            </select>
+                                        </div>
+                                        <div class="form-group api-endpoint-group">
+                                            <label>Endpoint</label>
+                                            <input type="text" id="api-endpoint" value="/api/settings">
+                                        </div>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>JSON Body</label>
+                                        <textarea id="api-request-body" class="modern-textarea api-body-input" rows="8" spellcheck="false"></textarea>
+                                    </div>
+                                    <div class="form-actions api-actions">
+                                        <button type="submit" class="btn btn-primary">
+                                            <i class="ph ph-paper-plane-right"></i> Send
+                                        </button>
+                                    </div>
+                                </form>
+                                <pre class="api-response-output" id="api-response-output" aria-live="polite"></pre>
+                            </div>
                         </div>
                     </div>
                 </section>
@@ -1022,6 +1117,7 @@
         </div>
     </div>
 
+    <script src="js/config.js"></script>
     <script src="js/app.js"></script>
 </body>
 

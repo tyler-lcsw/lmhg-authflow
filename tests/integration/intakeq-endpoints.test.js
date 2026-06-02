@@ -133,9 +133,9 @@ test('POST /api/intakeq/upload-auth/:authId returns 500 when IntakeQ returns 4xx
     }
 });
 
-// ============ Search-then-upload: persists intakeq_client_id ============
+// ============ Upload requires explicit IntakeQ link ============
 
-test('POST /api/intakeq/upload-auth/:authId searches for client and persists ClientId on first call', async () => {
+test('POST /api/intakeq/upload-auth/:authId refuses to auto-link the first name-search result', async () => {
     const srv = await startTestServer();
     try {
         await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
@@ -157,11 +157,11 @@ test('POST /api/intakeq/upload-auth/:authId searches for client and persists Cli
         const r = await callJson(srv.baseUrl, `/api/intakeq/upload-auth/${authId}`, { method: 'POST' });
         intakeq.__reset();
 
-        assert.equal(r.status, 200);
+        assert.equal(r.status, 409);
+        assert.match(r.body.error, /Sync from IntakeQ|linked/i);
         const row = await selectOne(srv.db, 'SELECT intakeq_client_id FROM clients WHERE id = ?', [clientId]);
-        assert.equal(row.intakeq_client_id, 'IQ_CLIENT_123');
-        // Both search and upload should have been called
-        assert.equal(fetchMock.calls.length, 2);
+        assert.equal(row.intakeq_client_id, null);
+        assert.equal(fetchMock.calls.length, 0);
     } finally {
         await srv.close();
     }
@@ -189,22 +189,96 @@ test('POST /api/intakeq/upload-auth/:authId skips search when intakeq_client_id 
     }
 });
 
-test('POST /api/intakeq/upload-auth/:authId returns 404 when IntakeQ search has no matches', async () => {
+test('POST /api/intakeq/upload-auth/:authId does not search IntakeQ when client is unlinked', async () => {
     const srv = await startTestServer();
     try {
         await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
         const { authId } = await seedClientAndAuth(srv, { name: 'Unknown Patient' });
 
         const intakeq = require('../../intakeq');
-        intakeq.__setFetch(fakeFetchFactory([
+        const fetchMock = fakeFetchFactory([
             { match: url => /\/clients\?search=/.test(url), respond: () => ({ body: '[]' }) }
-        ]));
+        ]);
+        intakeq.__setFetch(fetchMock);
 
         const r = await callJson(srv.baseUrl, `/api/intakeq/upload-auth/${authId}`, { method: 'POST' });
         intakeq.__reset();
 
-        assert.equal(r.status, 404);
-        assert.match(r.body.error, /No client named/);
+        assert.equal(r.status, 409);
+        assert.match(r.body.error, /Sync from IntakeQ|linked/i);
+        assert.equal(fetchMock.calls.length, 0);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('POST /api/generate-auth rejects IntakeQ attachments when client is not linked', async () => {
+    const srv = await startTestServer();
+    try {
+        await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        const clientId = await insertClient(srv.db, { name: 'No Link' });
+
+        const form = new FormData();
+        form.append('formData', JSON.stringify({ client_id: clientId, date: '2026-05-21' }));
+        form.append('intakeqNotes', JSON.stringify(['NOTE_FOREIGN']));
+
+        const resp = await fetch(`${srv.baseUrl}/api/generate-auth`, { method: 'POST', body: form });
+        const body = await resp.json();
+
+        assert.equal(resp.status, 400);
+        assert.match(body.error, /IntakeQ client/i);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('POST /api/generate-auth rejects IntakeQ notes not returned for the linked client', async () => {
+    const srv = await startTestServer();
+    try {
+        await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        const clientId = await insertClient(srv.db, { name: 'Linked', intakeq_client_id: 'IQ_7' });
+
+        const intakeq = require('../../intakeq');
+        intakeq.__setFetch(fakeFetchFactory([
+            { match: url => /\/notes\/summary\?clientId=IQ_7/.test(url), respond: () => ({ body: '[{"Id":"NOTE_ALLOWED"}]' }) }
+        ]));
+
+        const form = new FormData();
+        form.append('formData', JSON.stringify({ client_id: clientId, date: '2026-05-21' }));
+        form.append('intakeqNotes', JSON.stringify(['NOTE_FOREIGN']));
+
+        const resp = await fetch(`${srv.baseUrl}/api/generate-auth`, { method: 'POST', body: form });
+        const body = await resp.json();
+        intakeq.__reset();
+
+        assert.equal(resp.status, 400);
+        assert.match(body.error, /not linked to this client/i);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('POST /api/generate-auth rejects IntakeQ files not returned for the linked client', async () => {
+    const srv = await startTestServer();
+    try {
+        await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        const clientId = await insertClient(srv.db, { name: 'Linked Files', intakeq_client_id: 'IQ_8' });
+
+        const intakeq = require('../../intakeq');
+        intakeq.__setFetch(fakeFetchFactory([
+            { match: url => /\/files\?clientId=IQ_8/.test(url), respond: () => ({ body: '[{"Id":"FILE_ALLOWED"}]' }) }
+        ]));
+
+        const form = new FormData();
+        form.append('formData', JSON.stringify({ client_id: clientId, date: '2026-05-21' }));
+        form.append('intakeqFiles', JSON.stringify(['FILE_FOREIGN']));
+
+        const resp = await fetch(`${srv.baseUrl}/api/generate-auth`, { method: 'POST', body: form });
+        const body = await resp.json();
+        intakeq.__reset();
+
+        assert.equal(resp.status, 400);
+        assert.match(body.error, /not linked to this client/i);
     } finally {
         await srv.close();
     }

@@ -251,6 +251,12 @@ test('POST /api/fax-status returns current status via SRFax', async () => {
     const srv = await startTestServer();
     try {
         await seedSettings(srv.db, VALID_CREDS);
+        const clientId = await insertClient(srv.db, { name: 'Fax Status Owner' });
+        await insertAuthRequest(srv.db, {
+            client_id: clientId,
+            fax_details_id: 'FAX_X',
+            fax_status: 'In Progress'
+        });
 
         const srfax = require('../../srfax');
         srfax.__setPoster(async () => ({ Status: 'Success', Result: { SentStatus: 'Sent', Pages: 1 } }));
@@ -265,6 +271,33 @@ test('POST /api/fax-status returns current status via SRFax', async () => {
         assert.equal(r.status, 200);
         assert.equal(r.body.faxStatus, 'Sent');
         assert.equal(r.body.details.Pages, 1);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('POST /api/fax-status rejects faxDetailsId values not linked to local auth requests', async () => {
+    const srv = await startTestServer();
+    try {
+        await seedSettings(srv.db, VALID_CREDS);
+
+        const srfax = require('../../srfax');
+        let calls = 0;
+        srfax.__setPoster(async () => {
+            calls += 1;
+            return { Status: 'Success', Result: { SentStatus: 'Sent' } };
+        });
+
+        const r = await callJson(srv.baseUrl, '/api/fax-status', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ faxDetailsId: 'FOREIGN_FAX' })
+        });
+        srfax.__resetPoster();
+
+        assert.equal(r.status, 404);
+        assert.match(r.body.error, /not found|not linked/i);
+        assert.equal(calls, 0);
     } finally {
         await srv.close();
     }

@@ -1,0 +1,23 @@
+services:
+  authorization-manager:
+    build:
+      context: ../..
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      AUTH_FORMS_API_TOKEN_FILE: /run/secrets/auth_manager_api_token
+      DB_PATH: /data/database.sqlite
+      AUTH_FORMS_UPLOAD_DIR: /data/uploads
+      AUTH_FORMS_OUTPUT_DIR: /data/output
+      AUTH_FORMS_TRACE_LOG: /data/logs/auth-forms-trace.log
+      PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
+    ports:
+      - "100.70.222.25:3100:3000"
+    volumes:
+      - /srv/primary/services/authorization-manager/data:/data
+    secrets:
+      - auth_manager_api_token
+
+secrets:
+  auth_manager_api_token:
+    file: /srv/primary/services/authorization-manager/secrets/api-token

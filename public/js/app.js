@@ -2,6 +2,10 @@
 const API_TOKEN_STORAGE_KEY = 'authFormsApiToken';
 const nativeFetch = window.fetch.bind(window);
 
+function usesDashboardProxyAuth() {
+    return window.AUTH_FORMS_PROXY_AUTH === true;
+}
+
 function getApiToken() {
     let token = sessionStorage.getItem(API_TOKEN_STORAGE_KEY) || '';
     while (!token) {
@@ -17,14 +21,14 @@ window.fetch = async (input, init = {}) => {
     const isApiRequest = typeof url === 'string' && (url.startsWith('/api') || url.includes('/api/'));
     const requestInit = Object.assign({}, init);
 
-    if (isApiRequest) {
+    if (isApiRequest && !usesDashboardProxyAuth()) {
         const headers = new Headers(requestInit.headers || {});
         headers.set('x-auth-token', getApiToken());
         requestInit.headers = headers;
     }
 
     const response = await nativeFetch(input, requestInit);
-    if (isApiRequest && response.status === 401) {
+    if (isApiRequest && response.status === 401 && !usesDashboardProxyAuth()) {
         sessionStorage.removeItem(API_TOKEN_STORAGE_KEY);
         alert('API token was rejected. Enter the current server token and try again.');
     }
@@ -51,6 +55,21 @@ let clientsSortField = 'name';
 let clientsSortDir = 'asc';
 let faxLogSortField = 'fax_sent_date';
 let faxLogSortDir = 'desc';
+
+const VIEW_TITLES = {
+    dashboard: 'Clients',
+    'fax-log': 'Fax Log',
+    facilities: 'Directories',
+    'pcp-directory': 'PCP Directory',
+    calendar: 'Calendar',
+    preferences: 'Preferences',
+    diagnostics: 'Diagnostics',
+    'client-form': 'Client Details',
+    'client-details': 'Client Record',
+    'generate-auth': 'Authorization',
+    'facility-form': 'Provider Preset',
+    'pcp-form': 'PCP Details'
+};
 
 function isPollableFaxStatus(status) {
     return status === 'In Progress' || status === 'Queued';
@@ -112,6 +131,8 @@ initTheme();
 function switchView(viewId) {
     views.forEach(v => v.classList.remove('active'));
     document.getElementById(`view-${viewId}`).classList.add('active');
+    const pageTitle = document.getElementById('page-title');
+    if (pageTitle) pageTitle.textContent = VIEW_TITLES[viewId] || viewId;
 
     // Update sidebar nav
     navLinks.forEach(l => {
@@ -122,7 +143,8 @@ function switchView(viewId) {
 
     // Handle view-specific logic
     if (viewId === 'dashboard') loadClients();
-    if (viewId === 'settings') loadSettings();
+    if (viewId === 'preferences') loadSettings();
+    if (viewId === 'diagnostics') loadDiagnostics();
     if (viewId === 'facilities') loadFacilities();
     if (viewId === 'pcp-directory') loadPcpDirectory();
     if (viewId === 'fax-log') loadFaxLog();
@@ -273,7 +295,7 @@ document.getElementById('btn-add-client').addEventListener('click', () => {
 });
 
 // === API CALLS & DATA HANDLING ===
-const API_BASE = '/api';
+const API_BASE = window.AUTH_FORMS_API_BASE || '/api';
 
 // --- Clients ---
 async function loadClients() {
@@ -331,9 +353,7 @@ function appendTextCell(row, value, styles = {}) {
 function appendActionsCell(row) {
     const cell = document.createElement('td');
     const wrap = document.createElement('div');
-    wrap.style.display = 'flex';
-    wrap.style.gap = '4px';
-    wrap.style.alignItems = 'center';
+    wrap.className = 'action-buttons';
     cell.appendChild(wrap);
     row.appendChild(cell);
     return wrap;
@@ -344,7 +364,7 @@ function createIconButton(title, iconClass, onClick, options = {}) {
     button.type = 'button';
     button.className = 'btn btn-ghost';
     button.title = title;
-    if (options.danger) button.style.color = 'var(--danger)';
+    if (options.danger) button.classList.add('action-danger');
     const icon = document.createElement('i');
     icon.className = iconClass;
     button.appendChild(icon);
@@ -1000,6 +1020,194 @@ async function loadSettings() {
     }
 }
 
+async function loadDiagnostics() {
+    await loadSettings();
+    renderDiagnosticsConfigStatus();
+}
+
+function statusText(isConfigured) {
+    return isConfigured ? 'Configured' : 'Missing';
+}
+
+function setStatusText(id, value, isConfigured) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = value;
+    el.classList.toggle('status-ok', Boolean(isConfigured));
+    el.classList.toggle('status-warn', !isConfigured);
+}
+
+function renderDiagnosticsConfigStatus() {
+    setStatusText('diag-srfax-account', statusText(settings.srfax_access_id_configured), settings.srfax_access_id_configured);
+    setStatusText('diag-srfax-password', statusText(settings.srfax_access_pwd_configured), settings.srfax_access_pwd_configured);
+    setStatusText('diag-srfax-caller', settings.srfax_caller_id || 'Missing', Boolean(settings.srfax_caller_id));
+    setStatusText('diag-intakeq-key', statusText(settings.intakeq_api_key_configured), settings.intakeq_api_key_configured);
+}
+
+function renderStructuredOutput(outputId, ok, data) {
+    const output = document.getElementById(outputId);
+    if (!output) return;
+    output.replaceChildren();
+    const status = document.createElement('span');
+    status.className = ok ? 'status-ok' : 'status-err';
+    status.textContent = ok ? 'OK' : 'ERROR';
+    const detail = document.createElement('code');
+    detail.textContent = `\n${JSON.stringify(data, null, 2)}`;
+    output.appendChild(status);
+    output.appendChild(detail);
+}
+
+async function runFaxDiagnostics() {
+    const btn = document.getElementById('btn-run-fax-diagnostics');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Checking';
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/diag-fax`, { method: 'POST' });
+        const result = await res.json();
+        renderStructuredOutput('diagnostic-output', res.ok && result.all_valid, result);
+    } catch (err) {
+        renderStructuredOutput('diagnostic-output', false, { error: err.message });
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+}
+
+async function checkDiagnosticFaxStatus() {
+    const faxDetailsId = document.getElementById('diag_fax_id')?.value.trim();
+    if (!faxDetailsId) {
+        renderStructuredOutput('diagnostic-output', false, { error: 'Fax Details ID is required.' });
+        return null;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/fax-status`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ faxDetailsId })
+        });
+        const result = await res.json();
+        renderStructuredOutput('diagnostic-output', res.ok, result);
+        return result;
+    } catch (err) {
+        renderStructuredOutput('diagnostic-output', false, { error: err.message });
+        return null;
+    }
+}
+
+async function pollDiagnosticFaxStatus() {
+    const btn = document.getElementById('btn-poll-fax-status');
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="ph ph-spinner ph-spin"></i> Polling';
+    }
+
+    try {
+        const deadline = Date.now() + 120000;
+        while (Date.now() < deadline) {
+            const result = await checkDiagnosticFaxStatus();
+            const status = result && result.faxStatus;
+            if (status && !isPollableFaxStatus(status) && status !== 'Unknown') return;
+            await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+        renderStructuredOutput('diagnostic-output', false, { error: 'Timed out after 2 minutes.' });
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+        }
+    }
+}
+
+const API_PRESETS = {
+    settings: { method: 'GET', endpoint: '/api/settings', body: '' },
+    faxDiagnostics: { method: 'POST', endpoint: '/api/diag-fax', body: '' },
+    sendTestFax: { method: 'POST', endpoint: '/api/send-test-fax', body: '' },
+    faxStatus: { method: 'POST', endpoint: '/api/fax-status', body: '{\n  "faxDetailsId": ""\n}' },
+    clients: { method: 'GET', endpoint: '/api/clients', body: '' },
+    authRequests: { method: 'GET', endpoint: '/api/auth-requests/all', body: '' }
+};
+
+function renderApiResponse(status, data) {
+    const apiResponseOutput = document.getElementById('api-response-output');
+    if (!apiResponseOutput) return;
+    apiResponseOutput.replaceChildren();
+
+    const statusLine = document.createElement('span');
+    statusLine.className = status >= 200 && status < 300 ? 'status-ok' : 'status-err';
+    statusLine.textContent = `HTTP ${status}`;
+
+    const body = document.createElement('code');
+    body.textContent = `\n${JSON.stringify(data, null, 2)}`;
+
+    apiResponseOutput.appendChild(statusLine);
+    apiResponseOutput.appendChild(body);
+}
+
+function applyApiPreset(presetName) {
+    const preset = API_PRESETS[presetName];
+    if (!preset) return;
+    document.getElementById('api-method').value = preset.method;
+    document.getElementById('api-endpoint').value = preset.endpoint;
+    document.getElementById('api-request-body').value = preset.body;
+}
+
+function normalizeApiEndpoint(endpoint) {
+    const trimmed = endpoint.trim();
+    if (!trimmed) return '';
+    if (trimmed.startsWith('/api/')) return trimmed;
+    if (trimmed.startsWith('api/')) return `/${trimmed}`;
+    if (trimmed.startsWith('/')) return trimmed;
+    return `${API_BASE}/${trimmed.replace(/^\/+/, '')}`;
+}
+
+async function submitApiInterface(e) {
+    e.preventDefault();
+
+    const method = document.getElementById('api-method').value;
+    const endpoint = normalizeApiEndpoint(document.getElementById('api-endpoint').value);
+    const bodyText = document.getElementById('api-request-body').value.trim();
+    if (!endpoint) {
+        renderApiResponse(0, { error: 'Endpoint is required.' });
+        return;
+    }
+
+    const init = { method, headers: {} };
+    if (bodyText && method !== 'GET' && method !== 'HEAD') {
+        try {
+            init.body = JSON.stringify(JSON.parse(bodyText));
+            init.headers['Content-Type'] = 'application/json';
+        } catch (err) {
+            renderApiResponse(0, { error: 'JSON body is invalid.', detail: err.message });
+            return;
+        }
+    }
+
+    try {
+        const res = await fetch(endpoint, init);
+        const text = await res.text();
+        let parsed;
+        try {
+            parsed = text ? JSON.parse(text) : {};
+        } catch {
+            parsed = { raw: text };
+        }
+        renderApiResponse(res.status, parsed);
+    } catch (err) {
+        renderApiResponse(0, { error: err.message });
+    }
+}
+
+document.getElementById('api-preset')?.addEventListener('change', (e) => applyApiPreset(e.currentTarget.value));
+document.getElementById('api-interface-form')?.addEventListener('submit', submitApiInterface);
+
 document.getElementById('settings-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const newSettings = {
@@ -1063,18 +1271,24 @@ document.getElementById('btn-test-fax').addEventListener('click', async () => {
         const res = await fetch(`${API_BASE}/send-test-fax`, { method: 'POST' });
         const result = await res.json();
         if (res.ok && result.success) {
-            alert(result.message);
+            const faxIdInput = document.getElementById('diag_fax_id');
+            if (faxIdInput && result.faxDetailsId) faxIdInput.value = result.faxDetailsId;
+            renderStructuredOutput('diagnostic-output', true, result);
         } else {
-            alert("Error: " + (result.error || "Failed to send test fax"));
+            renderStructuredOutput('diagnostic-output', false, result);
         }
     } catch (err) {
         console.error("Error sending test fax:", err);
-        alert("Network error sending test fax.");
+        renderStructuredOutput('diagnostic-output', false, { error: err.message });
     } finally {
         btn.disabled = false;
         btn.innerHTML = originalHtml;
     }
 });
+
+document.getElementById('btn-run-fax-diagnostics')?.addEventListener('click', runFaxDiagnostics);
+document.getElementById('btn-check-fax-status')?.addEventListener('click', checkDiagnosticFaxStatus);
+document.getElementById('btn-poll-fax-status')?.addEventListener('click', pollDiagnosticFaxStatus);
 
 // --- Facilities ---
 async function loadFacilities() {

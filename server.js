@@ -20,7 +20,13 @@ const {
 
 const app = express();
 const port = 3000;
-const apiToken = process.env.AUTH_FORMS_API_TOKEN || crypto.randomBytes(24).toString('hex');
+function readSecretFile(pathValue) {
+    return pathValue ? fs.readFileSync(pathValue, 'utf8').trim() : '';
+}
+const configuredApiToken = process.env.AUTH_FORMS_API_TOKEN || readSecretFile(process.env.AUTH_FORMS_API_TOKEN_FILE);
+const apiToken = configuredApiToken || crypto.randomBytes(24).toString('hex');
+const uploadDir = process.env.AUTH_FORMS_UPLOAD_DIR || path.join(__dirname, 'uploads');
+const outputDir = process.env.AUTH_FORMS_OUTPUT_DIR || path.join(__dirname, 'output');
 
 const CLIENT_SELECT = `
     SELECT
@@ -214,6 +220,52 @@ function sendImmutableAuthorizationResponse(res) {
     });
 }
 
+function httpError(status, message) {
+    const error = new Error(message);
+    error.status = status;
+    return error;
+}
+
+function parseJsonArrayField(value, label) {
+    if (!value) return [];
+    let parsed;
+    try {
+        parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    } catch (err) {
+        throw httpError(400, `Invalid ${label} selection.`);
+    }
+
+    if (!Array.isArray(parsed)) {
+        throw httpError(400, `Invalid ${label} selection.`);
+    }
+
+    return parsed
+        .map((item) => item == null ? '' : String(item).trim())
+        .filter(Boolean);
+}
+
+function intakeqObjectId(item) {
+    if (!item || typeof item !== 'object') return null;
+    return item.Id || item.ID || item.NoteId || item.NoteID || item.FileId || item.FileID || null;
+}
+
+function makeIntakeqIdSet(items) {
+    if (!Array.isArray(items)) return new Set();
+    return new Set(
+        items
+            .map(intakeqObjectId)
+            .filter(Boolean)
+            .map((id) => String(id))
+    );
+}
+
+function assertAllowedIntakeqIds(requestedIds, allowedIds, label) {
+    const disallowed = requestedIds.find((id) => !allowedIds.has(String(id)));
+    if (disallowed) {
+        throw httpError(400, `Selected IntakeQ ${label} is not linked to this client.`);
+    }
+}
+
 function isTerminalFaxStatus(status) {
     return TERMINAL_FAX_STATUSES.has(status) || String(status || '').includes('Error');
 }
@@ -269,6 +321,47 @@ async function getIntakeqApiKey() {
     return row && row.intakeq_api_key ? row.intakeq_api_key : '';
 }
 
+async function validateIntakeqAttachmentSelections(formData, body) {
+    const noteIds = parseJsonArrayField(body.intakeqNotes, 'IntakeQ note');
+    const fileIds = parseJsonArrayField(body.intakeqFiles, 'IntakeQ file');
+
+    if (noteIds.length === 0 && fileIds.length === 0) {
+        return { noteIds, fileIds, apiKey: '' };
+    }
+
+    if (!formData.client_id) {
+        throw httpError(400, 'Client ID is required to attach IntakeQ notes or files.');
+    }
+
+    const client = await getDb(
+        "SELECT id, intakeq_client_id FROM clients WHERE id = ?",
+        [formData.client_id]
+    );
+    if (!client) {
+        throw httpError(404, 'Client not found.');
+    }
+    if (!client.intakeq_client_id) {
+        throw httpError(400, 'IntakeQ client link is required before attaching IntakeQ notes or files.');
+    }
+
+    const apiKey = await getIntakeqApiKey();
+    if (!apiKey) {
+        throw httpError(400, 'IntakeQ API Key not configured in Settings.');
+    }
+
+    if (noteIds.length > 0) {
+        const notes = await intakeq.getNotesSummary(apiKey, { clientId: client.intakeq_client_id });
+        assertAllowedIntakeqIds(noteIds, makeIntakeqIdSet(notes), 'note');
+    }
+
+    if (fileIds.length > 0) {
+        const files = await intakeq.listFiles(apiKey, client.intakeq_client_id);
+        assertAllowedIntakeqIds(fileIds, makeIntakeqIdSet(files), 'file');
+    }
+
+    return { noteIds, fileIds, apiKey };
+}
+
 async function syncPcpToIntakeq(data, provider) {
     return {
         skipped: true,
@@ -284,6 +377,20 @@ async function normalizePdfForFax(inputBuffer) {
     const pdfDoc = await PDFDocument.load(inputBuffer, { ignoreEncryption: true });
     const normalizedBytes = await pdfDoc.save();
     return Buffer.from(normalizedBytes);
+}
+
+function puppeteerLaunchOptions() {
+    const options = { headless: 'new' };
+    if (process.env.PUPPETEER_EXECUTABLE_PATH) {
+        options.executablePath = process.env.PUPPETEER_EXECUTABLE_PATH;
+    }
+    if (process.env.PUPPETEER_NO_SANDBOX === '1') {
+        if (process.env.NODE_ENV === 'production' && process.env.AUTH_FORMS_ALLOW_CHROME_NO_SANDBOX !== '1') {
+            throw new Error('Refusing to disable the Chromium sandbox in production.');
+        }
+        options.args = ['--no-sandbox', '--disable-setuid-sandbox'];
+    }
+    return options;
 }
 
 function getNextRecordNumber() {
@@ -306,7 +413,7 @@ app.set('view engine', 'ejs');
 // Multer setup for handling PDF uploads
 const storage = multer.diskStorage({
     destination: (req, file, cb) => {
-        cb(null, 'uploads/');
+        cb(null, uploadDir);
     },
     filename: (req, file, cb) => {
         cb(null, Date.now() + '-' + file.originalname);
@@ -351,8 +458,8 @@ function uploadAuthAttachments(req, res, next) {
 }
 
 // Ensure directories exist
-fs.mkdirSync('uploads', { recursive: true });
-fs.mkdirSync('output', { recursive: true });
+fs.mkdirSync(uploadDir, { recursive: true });
+fs.mkdirSync(outputDir, { recursive: true });
 
 // === API ROUTES ===
 
@@ -427,8 +534,13 @@ app.put('/api/clients/:id', async (req, res) => {
 });
 
 app.delete('/api/clients/:id', (req, res) => {
-    db.all("SELECT pdf_path FROM auth_requests WHERE client_id = ?", [req.params.id], async (selectErr, rows = []) => {
+    db.all("SELECT pdf_path, intakeq_uploaded_at FROM auth_requests WHERE client_id = ?", [req.params.id], async (selectErr, rows = []) => {
         if (selectErr) return res.status(500).json({ error: selectErr.message });
+        if (rows.some(isImmutableAuthorization)) {
+            return res.status(409).json({
+                error: "Client has an authorization uploaded to IntakeQ. Delete is blocked because uploaded authorizations are immutable."
+            });
+        }
 
         try {
             await runDb('BEGIN');
@@ -1008,6 +1120,8 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
             if (isImmutableAuthorization(existing)) return sendImmutableAuthorizationResponse(res);
         }
 
+        const intakeqAttachments = await validateIntakeqAttachmentSelections(formData, req.body);
+
         const facilitySettings = await getDb(`
             SELECT servicing_facility, serv_facility_npi, serv_facility_tax_id,
                    serv_facility_address, serv_facility_city, serv_facility_state,
@@ -1024,7 +1138,7 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
         const html = await ejs.renderFile(path.join(__dirname, 'views/form_template.ejs'), { data: formData });
 
         // 2. Generate PDF from HTML using Puppeteer
-        const browser = await puppeteer.launch({ headless: 'new' });
+        const browser = await puppeteer.launch(puppeteerLaunchOptions());
         const page = await browser.newPage();
         await page.setContent(html, { waitUntil: 'networkidle0' });
         const formPdfBuffer = await page.pdf({ format: 'A4', printBackground: true, margin: { top: '0', bottom: '0', left: '0', right: '0' } });
@@ -1037,38 +1151,25 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
         mainPages.forEach(page => mergedPdf.addPage(page));
 
         // 3a. Merge IntakeQ Notes if requested
-        if (req.body.intakeqNotes) {
+        if (intakeqAttachments.noteIds.length > 0) {
             try {
-                const noteIds = JSON.parse(req.body.intakeqNotes);
-                if (Array.isArray(noteIds) && noteIds.length > 0) {
-                    
-                    // Fetch API key
-                    const settings = await new Promise((resolve, reject) => {
-                        db.get("SELECT intakeq_api_key FROM settings WHERE id = 1", (err, row) => {
-                            if (err) reject(err); else resolve(row || {});
-                        });
+                const fetch = (await import('node-fetch')).default;
+
+                for (const noteId of intakeqAttachments.noteIds) {
+                    const response = await fetch(`https://intakeq.com/api/v1/notes/${noteId}/pdf`, {
+                        method: 'GET',
+                        headers: { 'X-Auth-Key': intakeqAttachments.apiKey }
                     });
 
-                    if (settings.intakeq_api_key) {
-                        const fetch = (await import('node-fetch')).default;
-                        
-                        for (const noteId of noteIds) {
-                            const response = await fetch(`https://intakeq.com/api/v1/notes/${noteId}/pdf`, {
-                                method: 'GET',
-                                headers: { 'X-Auth-Key': settings.intakeq_api_key }
-                            });
-                            
-                            if (response.ok) {
-                                const arrayBuffer = await response.arrayBuffer();
-                                const notePdfBuffer = Buffer.from(arrayBuffer);
-                                
-                                const noteDoc = await PDFDocument.load(notePdfBuffer);
-                                const notePages = await mergedPdf.copyPages(noteDoc, noteDoc.getPageIndices());
-                                notePages.forEach(page => mergedPdf.addPage(page));
-                            } else {
-                                console.error(`Failed to fetch IntakeQ PDF for note ${noteId}: ${response.status}`);
-                            }
-                        }
+                    if (response.ok) {
+                        const arrayBuffer = await response.arrayBuffer();
+                        const notePdfBuffer = Buffer.from(arrayBuffer);
+
+                        const noteDoc = await PDFDocument.load(notePdfBuffer);
+                        const notePages = await mergedPdf.copyPages(noteDoc, noteDoc.getPageIndices());
+                        notePages.forEach(page => mergedPdf.addPage(page));
+                    } else {
+                        console.error(`Failed to fetch IntakeQ PDF for note ${noteId}: ${response.status}`);
                     }
                 }
             } catch (err) {
@@ -1077,37 +1178,25 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
         }
 
         // 3c. Merge IntakeQ Client Files if requested
-        if (req.body.intakeqFiles) {
+        if (intakeqAttachments.fileIds.length > 0) {
             try {
-                const fileIds = JSON.parse(req.body.intakeqFiles);
-                if (Array.isArray(fileIds) && fileIds.length > 0) {
-                    
-                    const settings = await new Promise((resolve, reject) => {
-                        db.get("SELECT intakeq_api_key FROM settings WHERE id = 1", (err, row) => {
-                            if (err) reject(err); else resolve(row || {});
-                        });
+                const fetch = (await import('node-fetch')).default;
+
+                for (const fileId of intakeqAttachments.fileIds) {
+                    const response = await fetch(`https://intakeq.com/api/v1/files/${fileId}`, {
+                        method: 'GET',
+                        headers: { 'X-Auth-Key': intakeqAttachments.apiKey }
                     });
 
-                    if (settings.intakeq_api_key) {
-                        const fetch = (await import('node-fetch')).default;
-                        
-                        for (const fileId of fileIds) {
-                            const response = await fetch(`https://intakeq.com/api/v1/files/${fileId}`, {
-                                method: 'GET',
-                                headers: { 'X-Auth-Key': settings.intakeq_api_key }
-                            });
-                            
-                            if (response.ok) {
-                                const arrayBuffer = await response.arrayBuffer();
-                                const filePdfBuffer = Buffer.from(arrayBuffer);
-                                
-                                const fileDoc = await PDFDocument.load(filePdfBuffer, { ignoreEncryption: true });
-                                const filePages = await mergedPdf.copyPages(fileDoc, fileDoc.getPageIndices());
-                                filePages.forEach(page => mergedPdf.addPage(page));
-                            } else {
-                                console.error(`Failed to fetch IntakeQ File ${fileId}: ${response.status}`);
-                            }
-                        }
+                    if (response.ok) {
+                        const arrayBuffer = await response.arrayBuffer();
+                        const filePdfBuffer = Buffer.from(arrayBuffer);
+
+                        const fileDoc = await PDFDocument.load(filePdfBuffer, { ignoreEncryption: true });
+                        const filePages = await mergedPdf.copyPages(fileDoc, fileDoc.getPageIndices());
+                        filePages.forEach(page => mergedPdf.addPage(page));
+                    } else {
+                        console.error(`Failed to fetch IntakeQ File ${fileId}: ${response.status}`);
                     }
                 }
             } catch (err) {
@@ -1129,7 +1218,7 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
 
         const finalPdfBytes = await mergedPdf.save();
         const filename = `auth_request_client_${clientId}_${Date.now()}.pdf`;
-        const filepath = path.join(__dirname, 'output', filename);
+        const filepath = path.join(outputDir, filename);
         fs.writeFileSync(filepath, finalPdfBytes);
 
         // 4. Save record to DB
@@ -1157,7 +1246,7 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
     } catch (err) {
         cleanupUploadedFiles(req.files);
         console.error("PDF Generation Error:", err);
-        res.status(500).json({ error: err.message });
+        res.status(err.status || 500).json({ error: err.message });
     }
 });
 
@@ -1362,7 +1451,7 @@ app.post('/api/send-test-fax', async (req, res) => {
         }
 
         // 2. Generate small Test PDF
-        const browser = await puppeteer.launch({ headless: 'new' });
+        const browser = await puppeteer.launch(puppeteerLaunchOptions());
         const page = await browser.newPage();
         await page.setContent("<h1>SRFax Test Page</h1><p>This is a test fax sent from the Auth Flow application.</p><p>Sent back to the configured Caller ID.</p>", { waitUntil: 'networkidle0' });
         const testPdfBuffer = await page.pdf({ format: 'A4' });
@@ -1395,6 +1484,19 @@ app.post('/api/send-test-fax', async (req, res) => {
         console.log(`[TEST FAX] SRFax raw response:`, JSON.stringify(result));
 
         if (result.Status === 'Success') {
+            const recordNumber = await getNextRecordNumber();
+            await runDb(`
+                INSERT INTO auth_requests (
+                    client_id, form_data, is_draft, record_number, clinical_status,
+                    fax_status, fax_sent_date, fax_to_number, fax_details_id, last_updated
+                ) VALUES (?, ?, 0, ?, 'In Review', 'In Progress', datetime('now'), ?, ?, datetime('now'))
+            `, [
+                null,
+                JSON.stringify({ diagnostic_test_fax: true }),
+                recordNumber,
+                normalizePhoneFax(toFax),
+                String(result.Result)
+            ]);
             res.json({ success: true, faxDetailsId: result.Result, toFax, callerId, message: `Test fax queued successfully to ${toFax}. FaxID: ${result.Result}` });
         } else {
             res.status(400).json({ error: `SRFax error: ${result.Result}`, raw: result, toFax, callerId });
@@ -1405,11 +1507,19 @@ app.post('/api/send-test-fax', async (req, res) => {
     }
 });
 
-// --- Standalone fax status check (no auth record linkage, for test faxes and diagnostics) ---
+// --- Standalone fax status check for locally known fax detail IDs ---
 app.post('/api/fax-status', async (req, res) => {
     try {
         const { faxDetailsId } = req.body || {};
         if (!faxDetailsId) return res.status(400).json({ error: 'faxDetailsId is required' });
+
+        const auth = await getDb(
+            "SELECT id FROM auth_requests WHERE fax_details_id = ?",
+            [faxDetailsId]
+        );
+        if (!auth) {
+            return res.status(404).json({ error: 'Fax details ID is not linked to a local authorization request.' });
+        }
 
         const settings = await new Promise((resolve, reject) => {
             db.get("SELECT srfax_access_id, srfax_access_pwd FROM settings WHERE id = 1", (err, row) => {
@@ -1563,20 +1673,9 @@ app.post('/api/intakeq/upload-auth/:authId', async (req, res) => {
         let intakeqClientId = auth.intakeq_client_id;
 
         if (!intakeqClientId) {
-            const matchedClients = await intakeq.searchClients(settings.intakeq_api_key, auth.client_name);
-
-            if (!Array.isArray(matchedClients) || matchedClients.length === 0) {
-                return res.status(404).json({ error: `No client named "${auth.client_name}" found in IntakeQ. Use Sync from IntakeQ first to link this client.` });
-            }
-
-            const intakeqClient = matchedClients[0];
-            intakeqClientId = intakeqClient.ClientId || intakeqClient.ClientNumber;
-
-            if (!intakeqClientId) {
-                return res.status(404).json({ error: "Could not determine IntakeQ Client ID from search results." });
-            }
-
-            db.run("UPDATE clients SET intakeq_client_id = ? WHERE id = ?", [String(intakeqClientId), auth.client_id]);
+            return res.status(409).json({
+                error: `Client "${auth.client_name}" is not linked to IntakeQ. Use Sync from IntakeQ first to link this client before uploading.`
+            });
         }
 
         const pdfBuffer = fs.readFileSync(auth.pdf_path);
@@ -1640,11 +1739,11 @@ if (require.main === module) {
     installProcessErrorLogging();
     app.listen(port, () => {
         console.log(`Auth Forms app listening at http://localhost:${port}`);
-        if (!process.env.AUTH_FORMS_API_TOKEN) {
+        if (!configuredApiToken) {
             console.log(`API token for this session: ${apiToken}`);
             console.log('Set AUTH_FORMS_API_TOKEN to use a stable token.');
         }
-        console.log(`Trace log: ${DEFAULT_LOG_FILE}`);
+        console.log(`Trace log: ${process.env.AUTH_FORMS_TRACE_LOG || DEFAULT_LOG_FILE}`);
     });
 }
 

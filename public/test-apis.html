@@ -115,12 +115,18 @@ function show(elId, ok, data) {
     const el = document.getElementById(elId);
     const cls = ok ? 'status-ok' : 'status-err';
     const prefix = ok ? '✓ OK' : '✗ ERROR';
+    setOutput(el, cls, prefix, JSON.stringify(data, null, 2));
+}
+
+function setOutput(el, cls, prefix, detail = '') {
     el.replaceChildren();
     const status = document.createElement('span');
     status.className = cls;
     status.textContent = prefix;
     el.appendChild(status);
-    el.appendChild(document.createTextNode(`\n${JSON.stringify(data, null, 2)}`));
+    if (detail) {
+        el.appendChild(document.createTextNode(`\n${detail}`));
+    }
 }
 
 async function call(url, init = {}) {
@@ -177,12 +183,12 @@ async function pollStatus() {
         const body = await checkFaxStatus();
         const status = body && body.faxStatus;
         if (status && status !== 'In Progress' && status !== 'Queued' && status !== 'Unknown') {
-            out.innerHTML = `<span class="status-ok">✓ Final status: ${status}</span>\n` + JSON.stringify(body, null, 2);
+            setOutput(out, 'status-ok', `✓ Final status: ${status}`, JSON.stringify(body, null, 2));
             return;
         }
         await new Promise(r => setTimeout(r, 10000));
     }
-    out.innerHTML = `<span class="status-warn">⚠ Timed out after 2 min</span>`;
+    setOutput(out, 'status-warn', '⚠ Timed out after 2 min');
 }
 
 async function searchClient() {
