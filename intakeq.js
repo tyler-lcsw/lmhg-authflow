@@ -1,4 +1,6 @@
 const INTAKEQ_BASE = 'https://intakeq.com/api/v1';
+const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 
 const PCP_FIELD_MATCHERS = {
     pcp: [
@@ -22,8 +24,8 @@ const PCP_FIELD_MATCHERS = {
     ]
 };
 
-async function safeParseJson(resp) {
-    const raw = await resp.text();
+async function safeParseJson(resp, options = {}) {
+    const raw = await readLimitedResponseText(resp, options);
     if (!raw) return {};
     try {
         return JSON.parse(raw);
@@ -51,24 +53,69 @@ async function getFormData(injected) {
     return (await import('form-data')).default;
 }
 
-async function request(apiKey, url, init = {}, { fetch: injectedFetch } = {}) {
+function responseLimitError(limit) {
+    const err = new Error(`IntakeQ API response exceeded ${limit} bytes`);
+    err.code = 'INTAKEQ_RESPONSE_TOO_LARGE';
+    err.status = 502;
+    err.upstream = 'IntakeQ';
+    return err;
+}
+
+async function readLimitedResponseText(resp, { maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES } = {}) {
+    const contentLength = Number(resp.headers && typeof resp.headers.get === 'function'
+        ? resp.headers.get('content-length')
+        : null);
+    if (Number.isFinite(contentLength) && contentLength > maxResponseBytes) {
+        throw responseLimitError(maxResponseBytes);
+    }
+
+    if (!resp.body || typeof resp.body[Symbol.asyncIterator] !== 'function') {
+        const raw = await resp.text();
+        if (Buffer.byteLength(raw) > maxResponseBytes) throw responseLimitError(maxResponseBytes);
+        return raw;
+    }
+
+    const chunks = [];
+    let total = 0;
+    for await (const chunk of resp.body) {
+        const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+        total += buf.length;
+        if (total > maxResponseBytes) throw responseLimitError(maxResponseBytes);
+        chunks.push(buf);
+    }
+    return Buffer.concat(chunks).toString('utf8');
+}
+
+function createTimeoutSignal(timeoutMs = DEFAULT_TIMEOUT_MS) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    if (typeof timer.unref === 'function') timer.unref();
+    return { signal: controller.signal, clear: () => clearTimeout(timer) };
+}
+
+async function request(apiKey, url, init = {}, { fetch: injectedFetch, timeoutMs, maxResponseBytes } = {}) {
     const fetch = await getFetch(injectedFetch);
     const method = init.method || 'GET';
     const headers = Object.assign({ 'X-Auth-Key': apiKey }, init.headers || {});
-    const resp = await fetch(url, Object.assign({}, init, { headers }));
+    const { signal, clear } = createTimeoutSignal(timeoutMs);
+    try {
+        const resp = await fetch(url, Object.assign({}, init, { headers, signal }));
 
-    if (!resp.ok) {
-        const errText = await resp.text();
-        const err = new Error(`IntakeQ API Error: ${resp.status} - ${errText}`);
-        err.status = resp.status;
-        err.body = errText;
-        err.method = method;
-        err.url = url;
-        err.upstream = 'IntakeQ';
-        throw err;
+        if (!resp.ok) {
+            const errText = await readLimitedResponseText(resp, { maxResponseBytes });
+            const err = new Error(`IntakeQ API Error: ${resp.status} - ${errText}`);
+            err.status = resp.status;
+            err.body = errText;
+            err.method = method;
+            err.url = url;
+            err.upstream = 'IntakeQ';
+            throw err;
+        }
+
+        return safeParseJson(resp, { maxResponseBytes });
+    } finally {
+        clear();
     }
-
-    return safeParseJson(resp);
 }
 
 async function searchClients(apiKey, name, deps = {}) {
@@ -177,21 +224,27 @@ async function uploadFile(apiKey, clientId, fileBuffer, filename, deps = {}) {
         contentType: 'application/pdf'
     });
 
-    const resp = await fetch(`${INTAKEQ_BASE}/files/${encodeURIComponent(clientId)}`, {
-        method: 'POST',
-        headers: Object.assign({ 'X-Auth-Key': apiKey }, formData.getHeaders()),
-        body: formData
-    });
+    const { signal, clear } = createTimeoutSignal(deps.timeoutMs);
+    try {
+        const resp = await fetch(`${INTAKEQ_BASE}/files/${encodeURIComponent(clientId)}`, {
+            method: 'POST',
+            headers: Object.assign({ 'X-Auth-Key': apiKey }, formData.getHeaders()),
+            body: formData,
+            signal
+        });
 
-    if (!resp.ok) {
-        const errText = await resp.text();
-        const err = new Error(`IntakeQ upload failed: ${resp.status} - ${errText}`);
-        err.status = resp.status;
-        err.body = errText;
-        throw err;
+        if (!resp.ok) {
+            const errText = await readLimitedResponseText(resp, { maxResponseBytes: deps.maxResponseBytes });
+            const err = new Error(`IntakeQ upload failed: ${resp.status} - ${errText}`);
+            err.status = resp.status;
+            err.body = errText;
+            throw err;
+        }
+
+        return safeParseJson(resp, { maxResponseBytes: deps.maxResponseBytes });
+    } finally {
+        clear();
     }
-
-    return safeParseJson(resp);
 }
 
 module.exports = {
@@ -203,6 +256,9 @@ module.exports = {
     listFiles,
     uploadFile,
     INTAKEQ_BASE,
+    DEFAULT_TIMEOUT_MS,
+    DEFAULT_MAX_RESPONSE_BYTES,
+    readLimitedResponseText,
     __setFetch,
     __setFormData,
     __reset

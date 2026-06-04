@@ -284,6 +284,25 @@ test('POST /api/generate-auth rejects IntakeQ files not returned for the linked 
     }
 });
 
+test('POST /api/generate-auth rejects traversal client_id before generating a PDF', async () => {
+    const srv = await startTestServer();
+    try {
+        const form = new FormData();
+        form.append('formData', JSON.stringify({
+            client_id: '../../../../../../../tmp/auth_forms_probe',
+            date: '2026-06-04'
+        }));
+
+        const resp = await fetch(`${srv.baseUrl}/api/generate-auth`, { method: 'POST', body: form });
+        const body = await resp.json();
+
+        assert.equal(resp.status, 400);
+        assert.match(body.error, /invalid filename characters/i);
+    } finally {
+        await srv.close();
+    }
+});
+
 // ============ 400s / misconfigurations ============
 
 test('POST /api/intakeq/upload-auth/:authId returns 400 when API key is not configured', async () => {
@@ -357,17 +376,18 @@ test('GET /api/intakeq/client-search returns upstream failure details', async ()
     }
 });
 
-test('GET /api/intakeq/files returns list', async () => {
+test('GET /api/intakeq/files returns list for a linked local client', async () => {
     const srv = await startTestServer();
     try {
         await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        const clientId = await insertClient(srv.db, { name: 'Linked Files', intakeq_client_id: 'IQ_5' });
 
         const intakeq = require('../../intakeq');
         intakeq.__setFetch(fakeFetchFactory([
             { match: url => /\/files\?clientId=IQ_5/.test(url), respond: () => ({ body: '[{"Id":"a"}]' }) }
         ]));
 
-        const r = await callJson(srv.baseUrl, '/api/intakeq/files?intakeqClientId=IQ_5');
+        const r = await callJson(srv.baseUrl, `/api/intakeq/files?clientId=${clientId}&intakeqClientId=IQ_5`);
         intakeq.__reset();
 
         assert.equal(r.status, 200);
@@ -377,21 +397,114 @@ test('GET /api/intakeq/files returns list', async () => {
     }
 });
 
-test('GET /api/intakeq/notes falls through to server with clientId', async () => {
+test('GET /api/intakeq/files rejects IntakeQ IDs without a local client context', async () => {
     const srv = await startTestServer();
     try {
         await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        await insertClient(srv.db, { name: 'Other Client', intakeq_client_id: 'IQ_FOREIGN' });
+
+        const intakeq = require('../../intakeq');
+        const fetchMock = fakeFetchFactory([
+            { match: () => true, respond: () => ({ body: '[{"Id":"should-not-fetch"}]' }) }
+        ]);
+        intakeq.__setFetch(fetchMock);
+
+        const r = await callJson(srv.baseUrl, '/api/intakeq/files?intakeqClientId=IQ_FOREIGN');
+        intakeq.__reset();
+
+        assert.equal(r.status, 400);
+        assert.match(r.body.error, /clientId query parameter is required/i);
+        assert.equal(fetchMock.calls.length, 0);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('GET /api/intakeq/notes returns notes for a linked local clientId', async () => {
+    const srv = await startTestServer();
+    try {
+        await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        const clientId = await insertClient(srv.db, { name: 'Linked Notes', intakeq_client_id: 'IQ_7' });
 
         const intakeq = require('../../intakeq');
         intakeq.__setFetch(fakeFetchFactory([
             { match: url => /\/notes\/summary\?clientId=IQ_7/.test(url), respond: () => ({ body: '[{"Id":"n1"}]' }) }
         ]));
 
-        const r = await callJson(srv.baseUrl, '/api/intakeq/notes?intakeqClientId=IQ_7');
+        const r = await callJson(srv.baseUrl, `/api/intakeq/notes?clientId=${clientId}&intakeqClientId=IQ_7`);
         intakeq.__reset();
 
         assert.equal(r.status, 200);
         assert.deepEqual(r.body, [{ Id: 'n1' }]);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('GET /api/intakeq/notes rejects mismatched local and IntakeQ client IDs', async () => {
+    const srv = await startTestServer();
+    try {
+        await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        const clientId = await insertClient(srv.db, { name: 'Linked Notes', intakeq_client_id: 'IQ_ALLOWED' });
+
+        const intakeq = require('../../intakeq');
+        const fetchMock = fakeFetchFactory([
+            { match: () => true, respond: () => ({ body: '[{"Id":"should-not-fetch"}]' }) }
+        ]);
+        intakeq.__setFetch(fetchMock);
+
+        const r = await callJson(srv.baseUrl, `/api/intakeq/notes?clientId=${clientId}&intakeqClientId=IQ_FOREIGN`);
+        intakeq.__reset();
+
+        assert.equal(r.status, 403);
+        assert.match(r.body.error, /not linked to this local client/i);
+        assert.equal(fetchMock.calls.length, 0);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('GET /api/intakeq/notes rejects local clients that are not linked to IntakeQ', async () => {
+    const srv = await startTestServer();
+    try {
+        await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        const clientId = await insertClient(srv.db, { name: 'Unlinked Notes' });
+
+        const intakeq = require('../../intakeq');
+        const fetchMock = fakeFetchFactory([
+            { match: () => true, respond: () => ({ body: '[{"Id":"should-not-fetch"}]' }) }
+        ]);
+        intakeq.__setFetch(fetchMock);
+
+        const r = await callJson(srv.baseUrl, `/api/intakeq/notes?clientId=${clientId}`);
+        intakeq.__reset();
+
+        assert.equal(r.status, 409);
+        assert.match(r.body.error, /not linked to IntakeQ/i);
+        assert.equal(fetchMock.calls.length, 0);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('GET /api/intakeq/notes rejects name-only lookup without local client context', async () => {
+    const srv = await startTestServer();
+    try {
+        await seedSettings(srv.db, { intakeq_api_key: 'KEY' });
+        await insertClient(srv.db, { name: 'Name Only Client', intakeq_client_id: 'IQ_NAME' });
+
+        const intakeq = require('../../intakeq');
+        const fetchMock = fakeFetchFactory([
+            { match: () => true, respond: () => ({ body: '[{"Id":"should-not-fetch"}]' }) }
+        ]);
+        intakeq.__setFetch(fetchMock);
+
+        const r = await callJson(srv.baseUrl, '/api/intakeq/notes?clientName=Name%20Only%20Client');
+        intakeq.__reset();
+
+        assert.equal(r.status, 400);
+        assert.match(r.body.error, /clientId query parameter is required/i);
+        assert.equal(fetchMock.calls.length, 0);
     } finally {
         await srv.close();
     }

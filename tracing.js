@@ -17,6 +17,15 @@ function redactHeaders(headers = {}) {
     return redacted;
 }
 
+function safeRequestPath(req = {}) {
+    const rawPath = req.originalUrl || req.url || req.path || '';
+    try {
+        return new URL(rawPath, 'http://auth-forms.local').pathname;
+    } catch {
+        return String(rawPath).split('?')[0];
+    }
+}
+
 function createFileSink(logFile = process.env.AUTH_FORMS_TRACE_LOG || DEFAULT_LOG_FILE) {
     fs.mkdirSync(path.dirname(logFile), { recursive: true });
     return entry => {
@@ -47,7 +56,7 @@ function createRequestTracer({ sink = createFileSink() } = {}) {
             sink(baseEntry('request.complete', {
                 trace_id: traceId,
                 method: req.method,
-                path: req.originalUrl || req.url,
+                path: safeRequestPath(req),
                 status: res.statusCode,
                 duration_ms: Math.round(durationMs * 100) / 100,
                 ip: req.ip,
@@ -65,7 +74,7 @@ function createErrorLogger({ sink = createFileSink() } = {}) {
         sink(baseEntry('request.error', {
             trace_id: traceId,
             method: req.method,
-            path: req.originalUrl || req.url,
+            path: safeRequestPath(req),
             status: err.status || err.statusCode || 500,
             message: err.message,
             stack: err.stack,
@@ -103,5 +112,6 @@ module.exports = {
     createFileSink,
     createRequestTracer,
     installProcessErrorLogging,
+    safeRequestPath,
     DEFAULT_LOG_FILE
 };

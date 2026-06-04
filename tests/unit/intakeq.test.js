@@ -6,6 +6,9 @@ function fakeResponse({ ok = true, status = 200, body = '' } = {}) {
     return {
         ok,
         status,
+        headers: {
+            get: () => null
+        },
         text: async () => body
     };
 }
@@ -79,6 +82,35 @@ test('searchClients throws with method and sanitized URL on non-ok response', as
         assert.match(err.url, /\/clients\?search=Jane%20Doe&includeProfile=true$/);
         assert.doesNotMatch(err.url, /KEY/);
     }
+});
+
+test('searchClients sends an AbortSignal for bounded upstream timeouts', async () => {
+    const fetch = mockFetch(async () => fakeResponse({ body: '[]' }));
+
+    await intakeq.searchClients('KEY', 'Jane Doe', { fetch, timeoutMs: 1000 });
+
+    assert.ok(fetch.calls[0].init.signal);
+    assert.equal(typeof fetch.calls[0].init.signal.aborted, 'boolean');
+});
+
+test('searchClients aborts a slow upstream request after the configured timeout', async () => {
+    const fetch = mockFetch((url, init) => new Promise((resolve, reject) => {
+        init.signal.addEventListener('abort', () => reject(new Error('aborted by test signal')));
+    }));
+
+    await assert.rejects(
+        () => intakeq.searchClients('KEY', 'Jane Doe', { fetch, timeoutMs: 1 }),
+        /aborted by test signal/
+    );
+});
+
+test('searchClients rejects when the upstream response exceeds the configured byte cap', async () => {
+    const fetch = mockFetch(async () => fakeResponse({ body: '123456789' }));
+
+    await assert.rejects(
+        () => intakeq.searchClients('KEY', 'Jane Doe', { fetch, maxResponseBytes: 4 }),
+        /IntakeQ API response exceeded 4 bytes/
+    );
 });
 
 test('extractPcpCustomFields maps PCP custom field labels from client profile', () => {
@@ -234,10 +266,23 @@ test('uploadFile POSTs to /files/:clientId with auth key + FormData', async () =
     assert.equal(fetch.calls.length, 1);
     assert.match(fetch.calls[0].url, /\/files\/C42$/);
     assert.equal(fetch.calls[0].init.method, 'POST');
+    assert.ok(fetch.calls[0].init.signal);
     assert.equal(fetch.calls[0].init.headers['X-Auth-Key'], 'KEY');
     // FormData sets a content-type with a multipart boundary
     assert.match(fetch.calls[0].init.headers['content-type'], /^multipart\/form-data; boundary=/);
     assert.deepEqual(result, { Id: 'abc' });
+});
+
+test('uploadFile rejects oversized successful response bodies', async () => {
+    const fetch = mockFetch(async () => fakeResponse({ body: '{"large":true}' }));
+
+    await assert.rejects(
+        () => intakeq.uploadFile('KEY', 'C42', Buffer.from('pdf'), 'test.pdf', {
+            fetch,
+            maxResponseBytes: 4
+        }),
+        /IntakeQ API response exceeded 4 bytes/
+    );
 });
 
 test('uploadFile returns {} on empty 200 body (regression test)', async () => {

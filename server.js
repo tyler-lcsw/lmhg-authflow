@@ -103,6 +103,34 @@ function tokensMatch(provided, expected) {
         crypto.timingSafeEqual(providedBuffer, expectedBuffer);
 }
 
+function safeFilenamePart(value, fallback = 'unknown') {
+    const cleaned = String(value ?? '')
+        .normalize('NFKC')
+        .replace(/[^A-Za-z0-9._-]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 80);
+    return cleaned || fallback;
+}
+
+function resolveWithinDir(baseDir, filename) {
+    const base = path.resolve(baseDir);
+    const target = path.resolve(base, filename);
+    const relative = path.relative(base, target);
+    if (relative.startsWith('..') || path.isAbsolute(relative)) {
+        throw httpError(400, 'Unsafe file path.');
+    }
+    return target;
+}
+
+function authPdfPathForClient(clientId) {
+    const rawClientId = String(clientId ?? '').trim();
+    const safeClientId = safeFilenamePart(rawClientId, '');
+    if (!safeClientId || safeClientId !== rawClientId) {
+        throw httpError(400, 'Client ID contains invalid filename characters.');
+    }
+    return resolveWithinDir(outputDir, `auth_request_client_${safeClientId}_${Date.now()}.pdf`);
+}
+
 function requireApiToken(req, res, next) {
     if (process.env.AUTH_FORMS_TEST_BYPASS_AUTH === '1') return next();
 
@@ -319,6 +347,31 @@ async function findOrCreatePrimaryCareProvider(data) {
 async function getIntakeqApiKey() {
     const row = await getDb("SELECT intakeq_api_key FROM settings WHERE id = 1");
     return row && row.intakeq_api_key ? row.intakeq_api_key : '';
+}
+
+async function getLinkedIntakeqClient({ clientId, intakeqClientId, requireIntakeqClientId = false } = {}) {
+    if (!clientId) {
+        throw httpError(400, 'clientId query parameter is required.');
+    }
+
+    const client = await getDb(
+        "SELECT id, name, intakeq_client_id FROM clients WHERE id = ?",
+        [clientId]
+    );
+
+    if (!client) {
+        throw httpError(404, 'Client not found.');
+    }
+    if (!client.intakeq_client_id) {
+        throw httpError(409, 'Client is not linked to IntakeQ. Use Sync from IntakeQ first.');
+    }
+    if (intakeqClientId && String(intakeqClientId) !== String(client.intakeq_client_id)) {
+        throw httpError(403, 'Requested IntakeQ client is not linked to this local client.');
+    }
+    if (requireIntakeqClientId && !intakeqClientId) {
+        throw httpError(400, 'intakeqClientId query parameter is required.');
+    }
+    return client;
 }
 
 async function validateIntakeqAttachmentSelections(formData, body) {
@@ -1113,6 +1166,7 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
         const formData = JSON.parse(formDataStr);
         const clientId = formData.client_id;
         const authId = formData.auth_id;
+        const filepath = authPdfPathForClient(clientId);
 
         if (authId) {
             const existing = await getDb("SELECT id, intakeq_uploaded_at FROM auth_requests WHERE id = ?", [authId]);
@@ -1217,8 +1271,6 @@ app.post('/api/generate-auth', uploadAuthAttachments, async (req, res) => {
         }
 
         const finalPdfBytes = await mergedPdf.save();
-        const filename = `auth_request_client_${clientId}_${Date.now()}.pdf`;
-        const filepath = path.join(outputDir, filename);
         fs.writeFileSync(filepath, finalPdfBytes);
 
         // 4. Save record to DB
@@ -1580,12 +1632,10 @@ app.post('/api/diag-fax', async (req, res) => {
 // --- IntakeQ Integration ---
 app.get('/api/intakeq/notes', async (req, res) => {
     try {
-        const clientName = req.query.clientName;
+        const clientId = req.query.clientId;
         const intakeqClientId = req.query.intakeqClientId;
 
-        if (!clientName && !intakeqClientId) {
-            return res.status(400).json({ error: "Either clientName or intakeqClientId query parameter is required" });
-        }
+        const client = await getLinkedIntakeqClient({ clientId, intakeqClientId });
 
         const settings = await new Promise((resolve, reject) => {
             db.get("SELECT intakeq_api_key FROM settings WHERE id = 1", (err, row) => {
@@ -1600,12 +1650,12 @@ app.get('/api/intakeq/notes', async (req, res) => {
 
         const notes = await intakeq.getNotesSummary(
             settings.intakeq_api_key,
-            { clientId: intakeqClientId, clientName }
+            { clientId: client.intakeq_client_id }
         );
         res.json(notes);
     } catch (err) {
         console.error("IntakeQ Notes Error:", err);
-        res.status(500).json({ error: err.message });
+        res.status(err.status || 500).json({ error: err.message });
     }
 });
 
@@ -1708,10 +1758,9 @@ app.post('/api/intakeq/upload-auth/:authId', async (req, res) => {
 // --- IntakeQ: Get Client Files ---
 app.get('/api/intakeq/files', async (req, res) => {
     try {
+        const clientId = req.query.clientId;
         const intakeqClientId = req.query.intakeqClientId;
-        if (!intakeqClientId) {
-            return res.status(400).json({ error: "intakeqClientId query parameter is required" });
-        }
+        const client = await getLinkedIntakeqClient({ clientId, intakeqClientId, requireIntakeqClientId: true });
 
         const settings = await new Promise((resolve, reject) => {
             db.get("SELECT intakeq_api_key FROM settings WHERE id = 1", (err, row) => {
@@ -1724,11 +1773,11 @@ app.get('/api/intakeq/files', async (req, res) => {
             return res.status(400).json({ error: "IntakeQ API Key not configured in Settings." });
         }
 
-        const files = await intakeq.listFiles(settings.intakeq_api_key, intakeqClientId);
+        const files = await intakeq.listFiles(settings.intakeq_api_key, client.intakeq_client_id);
         res.json(files);
     } catch (err) {
         console.error("IntakeQ Get Files Error:", err);
-        res.status(500).json({ error: err.message });
+        res.status(err.status || 500).json({ error: err.message });
     }
 });
 

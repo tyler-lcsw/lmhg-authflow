@@ -2401,9 +2401,10 @@ document.getElementById('btn-load-intakeq-notes').addEventListener('click', asyn
     try {
         // Prefer direct IntakeQ client ID for fast, unambiguous lookup
         const iqId = currentClient.intakeq_client_id;
+        const clientId = encodeURIComponent(currentClient.id);
         const notesUrl = iqId
-            ? `${API_BASE}/intakeq/notes?intakeqClientId=${encodeURIComponent(iqId)}`
-            : `${API_BASE}/intakeq/notes?clientName=${encodeURIComponent(currentClient.name)}`;
+            ? `${API_BASE}/intakeq/notes?clientId=${clientId}&intakeqClientId=${encodeURIComponent(iqId)}`
+            : `${API_BASE}/intakeq/notes?clientId=${clientId}`;
 
         const res = await fetch(notesUrl);
         const data = await res.json();
@@ -2487,7 +2488,7 @@ document.getElementById('btn-load-intakeq-files').addEventListener('click', asyn
             return;
         }
 
-        const filesUrl = `${API_BASE}/intakeq/files?intakeqClientId=${encodeURIComponent(iqId)}`;
+        const filesUrl = `${API_BASE}/intakeq/files?clientId=${encodeURIComponent(currentClient.id)}&intakeqClientId=${encodeURIComponent(iqId)}`;
         const res = await fetch(filesUrl);
         const data = await res.json();
         

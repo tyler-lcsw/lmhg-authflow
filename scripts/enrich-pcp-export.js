@@ -86,9 +86,17 @@ function parseCsv(text) {
 }
 
 function csvEscape(value) {
-    const stringValue = String(value ?? '');
+    const stringValue = neutralizeSpreadsheetFormula(value);
     if (/[",\n\r]/.test(stringValue)) {
         return `"${stringValue.replace(/"/g, '""')}"`;
+    }
+    return stringValue;
+}
+
+function neutralizeSpreadsheetFormula(value) {
+    const stringValue = String(value ?? '');
+    if (/^[=+\-@\t\r]/.test(stringValue)) {
+        return `'${stringValue}`;
     }
     return stringValue;
 }
@@ -339,6 +347,8 @@ if (require.main === module) {
 
 module.exports = {
     parseCsv,
+    csvEscape,
+    neutralizeSpreadsheetFormula,
     writeCsv,
     reviewQueueRows,
     finalHumanReviewRows,

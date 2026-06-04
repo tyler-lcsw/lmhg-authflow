@@ -14,6 +14,11 @@ const {
     formatPhone
 } = require('../../lib/pcp-enrichment');
 
+const {
+    csvEscape,
+    writeCsv
+} = require('../../scripts/enrich-pcp-export');
+
 function abbyHefnerResult() {
     return {
         number: '1043242522',
@@ -96,6 +101,40 @@ function eastLouisvillePediatricsResult() {
         ]
     };
 }
+
+test('PCP CSV exports neutralize spreadsheet formula-leading cells', () => {
+    for (const formulaValue of [
+        '=HYPERLINK("https://example.test")',
+        '+SUM(1,1)',
+        '-10+20',
+        '@SUM(1,1)',
+        '\t=SUM(1,1)',
+        '\r=SUM(1,1)'
+    ]) {
+        assert.equal(csvEscape(formulaValue), csvEscape(`'${formulaValue}`));
+        assert.match(csvEscape(formulaValue), /^"?'/);
+    }
+});
+
+test('PCP CSV writer neutralizes formula cells while preserving regular CSV escaping', () => {
+    const writes = [];
+    const originalWriteFileSync = require('node:fs').writeFileSync;
+    const fs = require('node:fs');
+    fs.writeFileSync = (filePath, content) => writes.push({ filePath, content });
+    try {
+        writeCsv('/tmp/pcp-proof.csv', [
+            {
+                Name: '=IMPORTXML("https://example.test","//a")',
+                Notes: 'Clinic, Main'
+            }
+        ], ['Name', 'Notes']);
+    } finally {
+        fs.writeFileSync = originalWriteFileSync;
+    }
+
+    assert.equal(writes.length, 1);
+    assert.equal(writes[0].content, 'Name,Notes\n"\'=IMPORTXML(""https://example.test"",""//a"")","Clinic, Main"');
+});
 
 test('normalizes duplicate PCP export rows into provider candidates', () => {
     const candidates = normalizePcpRows([

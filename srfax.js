@@ -1,8 +1,17 @@
 const https = require('https');
 
 const SRFAX_URL = 'https://www.srfax.com/SRF_SecWebSvc.php';
+const DEFAULT_TIMEOUT_MS = 15000;
+const DEFAULT_MAX_RESPONSE_BYTES = 1024 * 1024;
 
-function srfaxPost(data) {
+function responseLimitError(limit) {
+    const err = new Error(`SRFax response exceeded ${limit} bytes`);
+    err.code = 'SRFAX_RESPONSE_TOO_LARGE';
+    err.upstream = 'SRFax';
+    return err;
+}
+
+function srfaxPost(data, { timeoutMs = DEFAULT_TIMEOUT_MS, maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES } = {}) {
     return new Promise((resolve, reject) => {
         const postData = JSON.stringify(data);
         const url = new URL(SRFAX_URL);
@@ -17,10 +26,29 @@ function srfaxPost(data) {
             }
         };
 
+        let settled = false;
+        function fail(err) {
+            if (settled) return;
+            settled = true;
+            reject(err);
+        }
+
         const req = https.request(options, (res) => {
-            let body = '';
-            res.on('data', chunk => body += chunk);
+            const chunks = [];
+            let total = 0;
+            res.on('data', chunk => {
+                const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+                total += buf.length;
+                if (total > maxResponseBytes) {
+                    req.destroy(responseLimitError(maxResponseBytes));
+                    return;
+                }
+                chunks.push(buf);
+            });
             res.on('end', () => {
+                if (settled) return;
+                settled = true;
+                const body = Buffer.concat(chunks).toString('utf8');
                 try {
                     const parsed = JSON.parse(body);
                     resolve(parsed);
@@ -30,7 +58,10 @@ function srfaxPost(data) {
             });
         });
 
-        req.on('error', reject);
+        req.setTimeout(timeoutMs, () => {
+            req.destroy(new Error(`SRFax request timed out after ${timeoutMs}ms`));
+        });
+        req.on('error', fail);
         req.write(postData);
         req.end();
     });
@@ -45,7 +76,7 @@ function normalizeCallerId(value) {
     return digits.length === 11 && digits.startsWith('1') ? digits.slice(1) : digits;
 }
 
-async function sendFax(creds, toFaxNumber, fileName, fileBuffer, { post } = {}) {
+async function sendFax(creds, toFaxNumber, fileName, fileBuffer, { post, timeoutMs, maxResponseBytes } = {}) {
     if (!creds.access_id || !creds.access_pwd || !creds.caller_id) {
         throw new Error('Missing SRFax credentials: access_id, access_pwd, or caller_id.');
     }
@@ -75,10 +106,10 @@ async function sendFax(creds, toFaxNumber, fileName, fileBuffer, { post } = {}) 
         sFileContent_1: fileBase64
     };
 
-    return (post || defaultPoster)(payload);
+    return (post || defaultPoster)(payload, { timeoutMs, maxResponseBytes });
 }
 
-async function checkFaxStatus(creds, faxDetailsID, { post } = {}) {
+async function checkFaxStatus(creds, faxDetailsID, { post, timeoutMs, maxResponseBytes } = {}) {
     const payload = {
         action: 'Get_FaxStatus',
         access_id: creds.access_id,
@@ -87,7 +118,15 @@ async function checkFaxStatus(creds, faxDetailsID, { post } = {}) {
         sResponseFormat: 'JSON'
     };
 
-    return (post || defaultPoster)(payload);
+    return (post || defaultPoster)(payload, { timeoutMs, maxResponseBytes });
 }
 
-module.exports = { sendFax, checkFaxStatus, srfaxPost, __setPoster, __resetPoster };
+module.exports = {
+    sendFax,
+    checkFaxStatus,
+    srfaxPost,
+    DEFAULT_TIMEOUT_MS,
+    DEFAULT_MAX_RESPONSE_BYTES,
+    __setPoster,
+    __resetPoster
+};

@@ -1,14 +1,18 @@
 const test = require('node:test');
 const assert = require('node:assert');
-const { sendFax, checkFaxStatus } = require('../../srfax');
+const { EventEmitter } = require('node:events');
+const https = require('node:https');
+const { sendFax, checkFaxStatus, srfaxPost } = require('../../srfax');
 
 function mockPoster() {
     const calls = [];
-    const fn = async (payload) => {
+    const fn = async (payload, options) => {
         calls.push(payload);
+        fn.options.push(options);
         return { Status: 'Success', Result: '12345678' };
     };
     fn.calls = calls;
+    fn.options = [];
     return fn;
 }
 
@@ -98,6 +102,20 @@ test('sendFax returns the poster result verbatim', async () => {
     assert.deepEqual(result, { Status: 'Success', Result: 'FAX_ID_42' });
 });
 
+test('sendFax forwards timeout and response-size limits to the SRFax poster', async () => {
+    const post = mockPoster();
+    await sendFax(validCreds, '15021234567', 'f.pdf', pdfBuf, {
+        post,
+        timeoutMs: 123,
+        maxResponseBytes: 456
+    });
+
+    assert.deepEqual(post.options[0], {
+        timeoutMs: 123,
+        maxResponseBytes: 456
+    });
+});
+
 test('checkFaxStatus builds correct Get_FaxStatus payload', async () => {
     const post = mockPoster();
     await checkFaxStatus({ access_id: 'A', access_pwd: 'B' }, 'FID123', { post });
@@ -107,4 +125,67 @@ test('checkFaxStatus builds correct Get_FaxStatus payload', async () => {
     assert.equal(p.access_pwd, 'B');
     assert.equal(p.sFaxDetailsID, 'FID123');
     assert.equal(p.sResponseFormat, 'JSON');
+});
+
+test('checkFaxStatus forwards timeout and response-size limits to the SRFax poster', async () => {
+    const post = mockPoster();
+    await checkFaxStatus({ access_id: 'A', access_pwd: 'B' }, 'FID123', {
+        post,
+        timeoutMs: 321,
+        maxResponseBytes: 654
+    });
+
+    assert.deepEqual(post.options[0], {
+        timeoutMs: 321,
+        maxResponseBytes: 654
+    });
+});
+
+test('srfaxPost rejects when response exceeds the configured byte cap', async () => {
+    const originalRequest = https.request;
+    https.request = (options, onResponse) => {
+        const req = new EventEmitter();
+        req.write = () => {};
+        req.end = () => {
+            const res = new EventEmitter();
+            onResponse(res);
+            res.emit('data', Buffer.from('12345'));
+        };
+        req.setTimeout = () => {};
+        req.destroy = err => req.emit('error', err);
+        return req;
+    };
+
+    try {
+        await assert.rejects(
+            () => srfaxPost({ action: 'Get_FaxStatus' }, { maxResponseBytes: 4 }),
+            /SRFax response exceeded 4 bytes/
+        );
+    } finally {
+        https.request = originalRequest;
+    }
+});
+
+test('srfaxPost destroys slow requests after the configured timeout', async () => {
+    const originalRequest = https.request;
+    https.request = (options, onResponse) => {
+        const req = new EventEmitter();
+        req.write = () => {};
+        req.end = () => {};
+        req.setTimeout = (timeoutMs, handler) => {
+            assert.equal(timeoutMs, 7);
+            setImmediate(handler);
+        };
+        req.destroy = err => req.emit('error', err);
+        return req;
+    };
+
+    try {
+        await assert.rejects(
+            () => srfaxPost({ action: 'Get_FaxStatus' }, { timeoutMs: 7 }),
+            /SRFax request timed out after 7ms/
+        );
+    } finally {
+        https.request = originalRequest;
+    }
 });

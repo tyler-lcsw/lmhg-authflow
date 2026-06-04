@@ -80,6 +80,7 @@ a { color: var(--brand); }
 
 <h3>2. List Client Files</h3>
 <div class="row">
+    <input id="local-client-id" type="text" placeholder="Local Client ID">
     <input id="iq-files-id" type="text" placeholder="IntakeQ Client ID">
     <button onclick="listFiles()">List Files</button>
 </div>
@@ -199,9 +200,11 @@ async function searchClient() {
 }
 
 async function listFiles() {
+    const clientId = document.getElementById('local-client-id').value.trim();
     const id = document.getElementById('iq-files-id').value.trim();
+    if (!clientId) return alert('Enter a Local Client ID.');
     if (!id) return alert('Enter an IntakeQ Client ID.');
-    const r = await call(`${API}/intakeq/files?intakeqClientId=${encodeURIComponent(id)}`);
+    const r = await call(`${API}/intakeq/files?clientId=${encodeURIComponent(clientId)}&intakeqClientId=${encodeURIComponent(id)}`);
     show('files-out', r.ok, r.body);
 }
 

@@ -4,7 +4,8 @@ const express = require('express');
 
 const {
     createRequestTracer,
-    createErrorLogger
+    createErrorLogger,
+    safeRequestPath
 } = require('../../tracing');
 
 function startApp(app) {
@@ -46,6 +47,27 @@ test('request tracer emits request completion with trace id and duration', async
     }
 });
 
+test('request tracer drops query strings while preserving the route path', async () => {
+    const entries = [];
+    const app = express();
+
+    app.use(createRequestTracer({ sink: entry => entries.push(entry) }));
+    app.get('/api/intakeq/files', (req, res) => {
+        res.json({ ok: true });
+    });
+
+    const server = await startApp(app);
+    try {
+        const response = await fetch(`${server.baseUrl}/api/intakeq/files?clientId=IQ_42&token=SECRET`);
+        assert.equal(response.status, 200);
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].path, '/api/intakeq/files');
+        assert.doesNotMatch(entries[0].path, /IQ_42|SECRET|\?/);
+    } finally {
+        await server.close();
+    }
+});
+
 test('error logger emits request error with trace id and message', async () => {
     const entries = [];
     const app = express();
@@ -73,4 +95,31 @@ test('error logger emits request error with trace id and message', async () => {
     } finally {
         await server.close();
     }
+});
+
+test('error logger drops query strings while preserving the route path', async () => {
+    const entries = [];
+    const app = express();
+
+    app.use(createRequestTracer({ sink: () => {} }));
+    app.get('/api/intakeq/notes', () => {
+        throw new Error('diagnostic failure');
+    });
+    app.use(createErrorLogger({ sink: entry => entries.push(entry) }));
+
+    const server = await startApp(app);
+    try {
+        const response = await fetch(`${server.baseUrl}/api/intakeq/notes?clientName=Jane%20Doe&token=SECRET`);
+        assert.equal(response.status, 500);
+
+        assert.equal(entries.length, 1);
+        assert.equal(entries[0].path, '/api/intakeq/notes');
+        assert.doesNotMatch(entries[0].path, /Jane|SECRET|\?/);
+    } finally {
+        await server.close();
+    }
+});
+
+test('safeRequestPath preserves route path when URL parsing falls back', () => {
+    assert.equal(safeRequestPath({ originalUrl: '/ok?token=SECRET' }), '/ok');
 });
