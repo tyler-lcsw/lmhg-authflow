@@ -9,6 +9,7 @@
     "dev:trace": "node --watch server.js",
     "logs:trace": "tail -f logs/auth-forms-trace.log",
     "backup:db": "node scripts/backup-local-db.js",
+    "enrich:pcp": "node scripts/enrich-pcp-export.js",
     "clean:generated": "node scripts/clean-generated.js",
     "clean:generated:apply": "node scripts/clean-generated.js --apply",
     "test": "node --test tests/unit/*.test.js tests/integration/*.test.js",

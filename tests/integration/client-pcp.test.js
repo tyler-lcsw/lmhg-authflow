@@ -53,11 +53,16 @@ test('POST /api/clients creates a shared primary care provider row', async () =>
 
         const firstClient = await callJson(srv.baseUrl, `/api/clients/${first.body.id}`);
         const secondClient = await callJson(srv.baseUrl, `/api/clients/${second.body.id}`);
+		const directory = await callJson(srv.baseUrl, '/api/pcp-directory');
 
         assert.equal(firstClient.body.primary_care_provider_id, secondClient.body.primary_care_provider_id);
         assert.equal(firstClient.body.pcp, 'Eric Hospital Primary Care');
         assert.equal(firstClient.body.pcp_phone, '1 (502) 555-0101');
         assert.equal(firstClient.body.pcp_npi, '1234567890');
+		assert.equal(directory.status, 200);
+		assert.equal(directory.body.length, 1);
+		assert.equal(directory.body[0].name, 'Eric Hospital Primary Care');
+		assert.equal(directory.body[0].client_count, 2);
     } finally {
         await srv.close();
     }

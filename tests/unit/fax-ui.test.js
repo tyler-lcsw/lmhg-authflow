@@ -77,3 +77,22 @@ test('final authorization screen separates PDF generation from optional faxing s
     assert.match(js, /function requireGeneratedPdfForFax\(/);
     assert.match(js, /Generate the PDF before starting the optional fax step\./);
 });
+
+test('authorization attachments reset when entering the workflow', () => {
+    const js = fs.readFileSync(path.join(__dirname, '../../public/js/app.js'), 'utf8');
+    const resetStart = js.indexOf('function resetAuthorizationAttachments()');
+    const resetEnd = js.indexOf('// --- IntakeQ Notes Logic ---', resetStart);
+    const resetBody = js.slice(resetStart, resetEnd);
+
+    assert.notEqual(resetStart, -1);
+    assert.match(resetBody, /uploadedFiles = \[\]/);
+    assert.match(resetBody, /intakeqNotes = \[\]/);
+    assert.match(resetBody, /intakeqFiles = \[\]/);
+    assert.match(resetBody, /selectedIntakeqNotes\.clear\(\)/);
+    assert.match(resetBody, /selectedIntakeqFiles\.clear\(\)/);
+    assert.match(resetBody, /renderFileList\(\)/);
+    assert.match(resetBody, /intakeq-notes-list/);
+    assert.match(resetBody, /intakeq-files-list/);
+    assert.match(resetBody, /pdf-upload/);
+    assert.ok((js.match(/resetAuthorizationAttachments\(\)/g) || []).length >= 4);
+});

@@ -40,6 +40,16 @@ test('existing PCP select displays only provider names while retaining full matc
     assert.match(appJs, /normalizeDigits\(pcp\.npi\) === npi/);
 });
 
+test('client save refreshes PCP directory cache for later forms', () => {
+    const successBlock = appJs.match(/\/\/ Save Client Forms[\s\S]*?if \(res\.ok\) \{[\s\S]*?if \(!id\) \{/);
+    assert.ok(successBlock, 'client save success block should exist');
+    assert.match(successBlock[0], /await loadPcpDirectory\(\)/);
+    assert.ok(
+		successBlock[0].indexOf('await loadPcpDirectory()') < successBlock[0].indexOf('if (!id) {'),
+		'PCP directory should refresh before navigating away from the saved client form'
+    );
+});
+
 test('client and PCP table rendering uses textContent for user-provided values', () => {
     assert.match(appJs, /function appendTextCell\(/);
     assert.match(appJs, /cell\.textContent = value/);

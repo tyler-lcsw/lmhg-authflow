@@ -835,6 +835,7 @@ document.getElementById('client-form').addEventListener('submit', async (e) => {
                 alert("Client saved locally, but IntakeQ PCP sync failed: " + result.intakeq_pcp_sync.error);
             }
             await loadClients();
+			await loadPcpDirectory();
             if (!id) {
                 viewClient(result.id);
             } else {
@@ -1634,9 +1635,7 @@ document.getElementById('btn-new-auth').addEventListener('click', async () => {
     // Set today's date (this will override any copied date, which is usually desired for new auths)
     document.getElementById('auth-generate-form').elements['date'].value = new Date().toISOString().split('T')[0];
 
-    // Clear files
-    uploadedFiles = [];
-    renderFileList();
+    resetAuthorizationAttachments();
 
     switchView('generate-auth');
     resetAuthStepQueue();
@@ -2229,8 +2228,7 @@ window.copyAuth = async (id) => {
         let authIdInput = document.getElementById('auth_id_input');
         if (authIdInput) authIdInput.value = '';
 
-        uploadedFiles = [];
-        renderFileList();
+		resetAuthorizationAttachments();
 
         document.getElementById('gen_client_name').innerText = currentClient.name;
         switchView('generate-auth');
@@ -2287,8 +2285,7 @@ window.editAuth = async (id) => {
 
         populateAuthForm(data);
 
-        uploadedFiles = [];
-        renderFileList();
+		resetAuthorizationAttachments();
 
         document.getElementById('gen_client_name').innerText = currentClient.name;
         switchView('generate-auth');
@@ -2354,6 +2351,34 @@ window.removeFile = (index) => {
     uploadedFiles.splice(index, 1);
     renderFileList();
 };
+
+function resetAuthorizationAttachments() {
+    uploadedFiles = [];
+    intakeqNotes = [];
+    intakeqFiles = [];
+    selectedIntakeqNotes.clear();
+    selectedIntakeqFiles.clear();
+
+    const uploadInput = document.getElementById('pdf-upload');
+    if (uploadInput) uploadInput.value = '';
+
+    renderFileList();
+
+    ['intakeq-notes-list', 'intakeq-files-list'].forEach(id => {
+		const list = document.getElementById(id);
+		if (list) list.replaceChildren();
+    });
+
+    ['intakeq-notes-loading', 'intakeq-files-loading'].forEach(id => {
+		const loader = document.getElementById(id);
+		if (loader) loader.style.display = 'none';
+    });
+
+    ['btn-load-intakeq-notes', 'btn-load-intakeq-files'].forEach(id => {
+		const btn = document.getElementById(id);
+		if (btn) btn.disabled = false;
+    });
+}
 
 // --- IntakeQ Notes Logic ---
 let intakeqNotes = []; // Stores notes fetched from API
