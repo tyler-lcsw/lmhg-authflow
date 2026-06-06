@@ -31,6 +31,26 @@ test('API routes require the configured API token', async () => {
     }
 });
 
+test('system status is token-protected and safe for agent polling', async () => {
+    const srv = await startTestServer({ requireAuth: true, apiToken: 'secret-token' });
+    try {
+        const missing = await callJson(srv.baseUrl, '/api/system/status');
+        assert.equal(missing.status, 401);
+
+        const status = await callJson(srv.baseUrl, '/api/system/status', {
+            headers: { 'x-auth-token': 'secret-token' }
+        });
+        assert.equal(status.status, 200);
+        assert.equal(status.body.service, 'authorization-manager');
+        assert.equal(status.body.dataClass, 'confirmed_ephi');
+        assert.equal(status.body.safeForAgentPolling, true);
+        assert.equal(status.body.clients, undefined);
+        assert.equal(status.body.records, undefined);
+    } finally {
+        await srv.close();
+    }
+});
+
 test('settings read masks write-only integration secrets', async () => {
     const srv = await startTestServer({ requireAuth: true, apiToken: 'secret-token' });
     try {

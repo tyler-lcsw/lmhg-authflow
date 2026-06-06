@@ -516,6 +516,16 @@ fs.mkdirSync(outputDir, { recursive: true });
 
 // === API ROUTES ===
 
+app.get('/api/system/status', (req, res) => {
+    res.json({
+        status: 'ok',
+        service: 'authorization-manager',
+        dataClass: 'confirmed_ephi',
+        safeForAgentPolling: true,
+        time: new Date().toISOString()
+    });
+});
+
 // --- Clients ---
 app.get('/api/clients', (req, res) => {
     db.all(`${CLIENT_SELECT} ORDER BY c.name`, [], (err, rows) => {
