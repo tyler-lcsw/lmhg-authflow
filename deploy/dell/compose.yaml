@@ -5,6 +5,7 @@ services:
     restart: unless-stopped
     environment:
       NODE_ENV: production
+      HOST: 0.0.0.0
       AUTH_FORMS_API_TOKEN_FILE: /run/secrets/auth_manager_api_token
       DB_PATH: /data/database.sqlite
       AUTH_FORMS_UPLOAD_DIR: /data/uploads
@@ -12,12 +13,9 @@ services:
       AUTH_FORMS_TRACE_LOG: /data/logs/auth-forms-trace.log
       PUPPETEER_EXECUTABLE_PATH: /usr/bin/chromium
     ports:
-      - "100.70.222.25:3100:3000"
+      - "127.0.0.1:3100:3000"
     volumes:
       - /srv/primary/services/authorization-manager/data:/data
-    secrets:
-      - auth_manager_api_token
-
-secrets:
-  auth_manager_api_token:
-    file: /srv/primary/services/authorization-manager/secrets/api-token
+      # Docker Compose file secrets ignore uid/gid/mode for local files; keep
+      # the host file owned by UID 1000 with mode 0400.
+      - /srv/primary/services/authorization-manager/secrets/api-token:/run/secrets/auth_manager_api_token:ro

@@ -1,5 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
     startTestServer,
@@ -106,17 +108,150 @@ test('PUT /api/auth-requests/:id refuses form changes on immutable authorization
     }
 });
 
-test('DELETE /api/auth-requests/:id refuses immutable authorizations', async () => {
+test('DELETE /api/auth-requests/:id records only minimal audit metadata', async () => {
     const srv = await startTestServer();
     try {
         const clientId = await createClient(srv.db);
-        const authId = await insertAuthRequest(srv.db, immutableAuth(clientId, { intakeq_uploaded_at: '2026-05-18 12:00:00' }));
+        const authId = await insertAuthRequest(srv.db, immutableAuth(clientId, {
+            pdf_path: '/synthetic/phi-bearing-authorization.pdf'
+        }));
+
+        const result = await callJson(srv.baseUrl, `/api/auth-requests/${authId}`, { method: 'DELETE' });
+
+        assert.equal(result.status, 200);
+        const row = await selectOne(srv.db, 'SELECT id FROM auth_requests WHERE id = ?', [authId]);
+        assert.equal(row, undefined);
+
+        const columns = await new Promise((resolve, reject) => {
+            srv.db.all('PRAGMA table_info(auth_request_deletions)', [], (err, rows) => err ? reject(err) : resolve(rows));
+        });
+        assert.deepEqual(
+            columns.map(column => column.name),
+            ['id', 'auth_request_id', 'deleted_at', 'trace_id']
+        );
+
+        const audit = await selectOne(srv.db, 'SELECT * FROM auth_request_deletions WHERE auth_request_id = ?', [authId]);
+        assert.equal(audit.auth_request_id, authId);
+        assert.ok(audit.deleted_at);
+        assert.ok(audit.trace_id);
+        assert.deepEqual(Object.keys(audit), ['id', 'auth_request_id', 'deleted_at', 'trace_id']);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('DELETE /api/auth-requests/:id refuses authorizations uploaded to IntakeQ', async () => {
+    const srv = await startTestServer();
+    try {
+        const clientId = await createClient(srv.db);
+        const authId = await insertAuthRequest(srv.db, immutableAuth(clientId, {
+            intakeq_uploaded_at: '2026-05-18 12:00:00'
+        }));
 
         const result = await callJson(srv.baseUrl, `/api/auth-requests/${authId}`, { method: 'DELETE' });
 
         assert.equal(result.status, 409);
+        assert.match(result.body.error, /immutable|uploaded/i);
+        const row = await selectOne(srv.db, 'SELECT id FROM auth_requests WHERE id = ?', [authId]);
+        const audit = await selectOne(
+            srv.db,
+            'SELECT COUNT(*) AS count FROM auth_request_deletions WHERE auth_request_id = ?',
+            [authId]
+        );
+        assert.equal(row.id, authId);
+        assert.equal(audit.count, 0);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('DELETE /api/auth-requests/:id refuses successfully faxed authorizations', async () => {
+    const srv = await startTestServer();
+    try {
+        const clientId = await createClient(srv.db);
+        const authId = await insertAuthRequest(srv.db, immutableAuth(clientId, {
+            fax_status: 'Sent',
+            fax_details_id: 'fax-123',
+            fax_sent_date: '2026-05-18 12:00:00'
+        }));
+
+        const result = await callJson(srv.baseUrl, `/api/auth-requests/${authId}`, { method: 'DELETE' });
+
+        assert.equal(result.status, 409);
+        assert.match(result.body.error, /faxed/i);
         const row = await selectOne(srv.db, 'SELECT id FROM auth_requests WHERE id = ?', [authId]);
         assert.equal(row.id, authId);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('concurrent DELETE requests create exactly one minimal audit event', async () => {
+    const srv = await startTestServer();
+    try {
+        const clientId = await createClient(srv.db);
+        const authId = await insertAuthRequest(srv.db, immutableAuth(clientId));
+
+        const results = await Promise.all(Array.from({ length: 8 }, () => (
+            callJson(srv.baseUrl, `/api/auth-requests/${authId}`, { method: 'DELETE' })
+        )));
+        const statuses = results.map(result => result.status);
+        const audit = await selectOne(
+            srv.db,
+            'SELECT COUNT(*) AS count FROM auth_request_deletions WHERE auth_request_id = ?',
+            [authId]
+        );
+
+        assert.equal(statuses.filter(status => status === 200).length, 1);
+        assert.equal(statuses.filter(status => status === 404).length, 7);
+        assert.equal(audit.count, 1);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('DELETE removes a managed PDF and clears its cleanup outbox entry', async () => {
+    const srv = await startTestServer();
+    try {
+        const clientId = await createClient(srv.db);
+        const pdfPath = path.join(srv.outputDir, 'synthetic-authorization.pdf');
+        fs.writeFileSync(pdfPath, 'synthetic fixture');
+        const authId = await insertAuthRequest(srv.db, immutableAuth(clientId, { pdf_path: pdfPath }));
+
+        const result = await callJson(srv.baseUrl, `/api/auth-requests/${authId}`, { method: 'DELETE' });
+        const pending = await selectOne(srv.db, 'SELECT COUNT(*) AS count FROM auth_request_file_cleanup');
+
+        assert.equal(result.status, 200);
+        assert.equal(result.body.cleanupPending, false);
+        assert.equal(fs.existsSync(pdfPath), false);
+        assert.equal(pending.count, 0);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('DELETE retains visible retry state when managed PDF cleanup fails', async () => {
+    const srv = await startTestServer();
+    try {
+        const clientId = await createClient(srv.db);
+        const pdfPath = path.join(srv.outputDir, 'synthetic-cleanup-failure.pdf');
+        fs.mkdirSync(pdfPath);
+        const authId = await insertAuthRequest(srv.db, immutableAuth(clientId, { pdf_path: pdfPath }));
+
+        const result = await callJson(srv.baseUrl, `/api/auth-requests/${authId}`, { method: 'DELETE' });
+        const pending = await selectOne(
+            srv.db,
+            'SELECT auth_request_id, attempts, last_error_code FROM auth_request_file_cleanup WHERE auth_request_id = ?',
+            [authId]
+        );
+        const status = await callJson(srv.baseUrl, '/api/system/status');
+
+        assert.equal(result.status, 200);
+        assert.equal(result.body.cleanupPending, true);
+        assert.equal(pending.auth_request_id, authId);
+        assert.equal(pending.attempts, 1);
+        assert.match(pending.last_error_code, /^(?:EISDIR|EPERM)$/);
+        assert.equal(status.body.pendingFileCleanup, 1);
     } finally {
         await srv.close();
     }

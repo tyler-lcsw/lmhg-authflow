@@ -1,5 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { spawnSync } = require('node:child_process');
 
 const {
     startTestServer,
@@ -9,6 +13,25 @@ const {
     selectOne,
     callJson
 } = require('../helpers/testServer');
+
+function runServerWithAuthEnv(overrides = {}) {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'auth-forms-startup-'));
+    const env = { ...process.env, NODE_ENV: 'production', DB_PATH: path.join(tmpDir, 'test.sqlite'), ...overrides };
+    delete env.AUTH_FORMS_API_TOKEN;
+    delete env.AUTH_FORMS_API_TOKEN_FILE;
+    delete env.AUTH_FORMS_TEST_BYPASS_AUTH;
+    if (!Object.hasOwn(overrides, 'AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK')) {
+        delete env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK;
+    }
+    const result = spawnSync(process.execPath, ['server.js'], {
+        cwd: path.resolve(__dirname, '../..'),
+        env,
+        encoding: 'utf8',
+        timeout: 1500
+    });
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    return result;
+}
 
 test('API routes require the configured API token', async () => {
     const srv = await startTestServer({ requireAuth: true, apiToken: 'secret-token' });
@@ -30,6 +53,54 @@ test('API routes require the configured API token', async () => {
         await srv.close();
     }
 });
+
+test('API routes fail closed when no API token is configured', async () => {
+    const srv = await startTestServer({ disableAuthWithoutBypass: true });
+    try {
+        const clients = await callJson(srv.baseUrl, '/api/clients');
+        const status = await callJson(srv.baseUrl, '/api/system/status');
+
+        assert.equal(clients.status, 503);
+        assert.match(clients.body.error, /not configured/i);
+        assert.equal(status.status, 503);
+        assert.match(status.body.error, /not configured/i);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('explicit tokenless development mode permits loopback requests only', async () => {
+    const srv = await startTestServer({ allowTokenlessLoopback: true });
+    try {
+        const clients = await callJson(srv.baseUrl, '/api/clients');
+        const status = await callJson(srv.baseUrl, '/api/system/status');
+
+        assert.equal(clients.status, 200);
+        assert.equal(status.status, 200);
+        assert.equal(status.body.status, 'ok');
+    } finally {
+        await srv.close();
+    }
+});
+
+test('production startup fails when the API token is missing', () => {
+    const result = runServerWithAuthEnv({ HOST: '127.0.0.1' });
+
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stderr}\n${result.stdout}`, /API token.*required/i);
+});
+
+test('tokenless development startup rejects a non-loopback bind', () => {
+    const result = runServerWithAuthEnv({
+        NODE_ENV: 'development',
+        HOST: '0.0.0.0',
+        AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK: '1'
+    });
+
+    assert.notEqual(result.status, 0);
+    assert.match(`${result.stderr}\n${result.stdout}`, /loopback/i);
+});
+
 
 test('system status is token-protected and safe for agent polling', async () => {
     const srv = await startTestServer({ requireAuth: true, apiToken: 'secret-token' });

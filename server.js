@@ -7,6 +7,7 @@ const puppeteer = require('puppeteer');
 const { PDFDocument } = require('pdf-lib');
 const fs = require('fs');
 const crypto = require('crypto');
+const sqlite3 = require('sqlite3').verbose();
 
 const db = require('./db');
 const { sendFax, checkFaxStatus } = require('./srfax');
@@ -19,12 +20,13 @@ const {
 } = require('./tracing');
 
 const app = express();
-const port = 3000;
+const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || '127.0.0.1';
 function readSecretFile(pathValue) {
     return pathValue ? fs.readFileSync(pathValue, 'utf8').trim() : '';
 }
 const configuredApiToken = process.env.AUTH_FORMS_API_TOKEN || readSecretFile(process.env.AUTH_FORMS_API_TOKEN_FILE);
-const apiToken = configuredApiToken || crypto.randomBytes(24).toString('hex');
+const apiToken = configuredApiToken || '';
 const uploadDir = process.env.AUTH_FORMS_UPLOAD_DIR || path.join(__dirname, 'uploads');
 const outputDir = process.env.AUTH_FORMS_OUTPUT_DIR || path.join(__dirname, 'output');
 
@@ -103,6 +105,31 @@ function tokensMatch(provided, expected) {
         crypto.timingSafeEqual(providedBuffer, expectedBuffer);
 }
 
+function isLoopbackAddress(value) {
+    const address = String(value || '').trim().toLowerCase().split('%')[0];
+    if (address === '::1') return true;
+    const ipv4 = address.startsWith('::ffff:') ? address.slice(7) : address;
+    return /^127(?:\.\d{1,3}){3}$/.test(ipv4);
+}
+
+function isLoopbackBindHost(value) {
+    const bindHost = String(value || '').trim().toLowerCase();
+    return bindHost === '127.0.0.1' || bindHost === '::1';
+}
+
+function assertStartupAuthConfiguration() {
+    if (configuredApiToken) return;
+    if (process.env.NODE_ENV === 'production') {
+        throw new Error('API token is required in production');
+    }
+    if (process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK !== '1') {
+        throw new Error('API token is required unless explicit tokenless loopback development mode is enabled');
+    }
+    if (!isLoopbackBindHost(host)) {
+        throw new Error('Tokenless development mode requires HOST to be a loopback address');
+    }
+}
+
 function safeFilenamePart(value, fallback = 'unknown') {
     const cleaned = String(value ?? '')
         .normalize('NFKC')
@@ -133,6 +160,15 @@ function authPdfPathForClient(clientId) {
 
 function requireApiToken(req, res, next) {
     if (process.env.AUTH_FORMS_TEST_BYPASS_AUTH === '1') return next();
+    if (!apiToken) {
+        if (
+            process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK === '1' &&
+            isLoopbackAddress(req.socket && req.socket.remoteAddress)
+        ) {
+            return next();
+        }
+        return res.status(503).json({ error: "API token is not configured" });
+    }
 
     const headerToken = req.get('x-auth-token') || '';
     const authHeader = req.get('authorization') || '';
@@ -217,34 +253,137 @@ function validateClientData(data) {
     );
 }
 
-function runDb(sql, params = []) {
+function runOnDatabase(database, sql, params = []) {
     return new Promise((resolve, reject) => {
-        db.run(sql, params, function (err) {
+        database.run(sql, params, function (err) {
             if (err) reject(err);
             else resolve(this);
         });
     });
 }
 
-function getDb(sql, params = []) {
+function getFromDatabase(database, sql, params = []) {
     return new Promise((resolve, reject) => {
-        db.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
+        database.get(sql, params, (err, row) => err ? reject(err) : resolve(row));
     });
 }
 
-async function rollbackQuietly() {
-    try { await runDb('ROLLBACK'); } catch {}
+function allFromDatabase(database, sql, params = []) {
+    return new Promise((resolve, reject) => {
+        database.all(sql, params, (err, rows) => err ? reject(err) : resolve(rows));
+    });
+}
+
+function closeDatabase(database) {
+    return new Promise((resolve, reject) => {
+        database.close(err => err ? reject(err) : resolve());
+    });
+}
+
+function openTransactionDatabase() {
+    return new Promise((resolve, reject) => {
+        const transactionDb = new sqlite3.Database(db.filename, err => {
+            if (err) return reject(err);
+            transactionDb.configure('busyTimeout', 5000);
+            resolve(transactionDb);
+        });
+    });
+}
+
+function runDb(sql, params = []) {
+    return runOnDatabase(db, sql, params);
+}
+
+function getDb(sql, params = []) {
+    return getFromDatabase(db, sql, params);
+}
+
+function allDb(sql, params = []) {
+    return allFromDatabase(db, sql, params);
+}
+
+let transactionTail = Promise.resolve();
+
+function withImmediateTransaction(work) {
+    const execute = async () => {
+        const transactionDb = await openTransactionDatabase();
+        const tx = {
+            run: (sql, params = []) => runOnDatabase(transactionDb, sql, params),
+            get: (sql, params = []) => getFromDatabase(transactionDb, sql, params),
+            all: (sql, params = []) => allFromDatabase(transactionDb, sql, params)
+        };
+        let began = false;
+        try {
+            await tx.run('PRAGMA foreign_keys = ON');
+            await tx.run('BEGIN IMMEDIATE');
+            began = true;
+            const value = await work(tx);
+            await tx.run('COMMIT');
+            began = false;
+            return value;
+        } catch (error) {
+            if (began) {
+                try { await tx.run('ROLLBACK'); } catch {}
+            }
+            throw error;
+        } finally {
+            await closeDatabase(transactionDb);
+        }
+    };
+    const result = transactionTail.then(execute, execute);
+    transactionTail = result.then(() => undefined, () => undefined);
+    return result;
+}
+
+async function attemptAuthFileCleanup(cleanup) {
+    if (!cleanup) return false;
+    try {
+        const managedPath = resolveWithinDir(outputDir, cleanup.pdf_path);
+        if (fs.existsSync(managedPath)) fs.unlinkSync(managedPath);
+        await runDb('DELETE FROM auth_request_file_cleanup WHERE id = ?', [cleanup.id]);
+        return false;
+    } catch (error) {
+        const errorCode = error && error.code ? String(error.code) : 'OUTSIDE_MANAGED_OUTPUT';
+        await runDb(`
+            UPDATE auth_request_file_cleanup
+            SET attempts = attempts + 1,
+                last_attempt_at = datetime('now'),
+                last_error_code = ?
+            WHERE id = ?
+        `, [errorCode, cleanup.id]);
+        return true;
+    }
+}
+
+async function retryPendingAuthFileCleanup() {
+    const pending = await allDb('SELECT id, pdf_path FROM auth_request_file_cleanup ORDER BY id');
+    let remaining = 0;
+    for (const cleanup of pending) {
+        if (await attemptAuthFileCleanup(cleanup)) remaining += 1;
+    }
+    return remaining;
 }
 
 const TERMINAL_FAX_STATUSES = new Set(['Sent', 'Success', 'Failed', 'Error']);
+const SUCCESSFUL_FAX_STATUSES = new Set(['Sent', 'Success']);
 
 function isImmutableAuthorization(auth) {
     return auth && Boolean(auth.intakeq_uploaded_at);
 }
 
+function isSuccessfullyFaxedAuthorization(auth) {
+    return auth && SUCCESSFUL_FAX_STATUSES.has(String(auth.fax_status || ''));
+}
+
 function sendImmutableAuthorizationResponse(res) {
     return res.status(409).json({
         error: "Authorization is immutable. Copy the existing authorization to make changes."
+    });
+}
+
+function sendFaxedAuthorizationDeleteResponse(res) {
+    return res.status(409).json({
+        error: "Authorization has been successfully faxed and cannot be deleted."
     });
 }
 
@@ -516,14 +655,21 @@ fs.mkdirSync(outputDir, { recursive: true });
 
 // === API ROUTES ===
 
-app.get('/api/system/status', (req, res) => {
-    res.json({
-        status: 'ok',
-        service: 'authorization-manager',
-        dataClass: 'confirmed_ephi',
-        safeForAgentPolling: true,
-        time: new Date().toISOString()
-    });
+app.get('/api/system/status', async (req, res) => {
+    try {
+        await db.migrationReady;
+        const pending = await getDb('SELECT COUNT(*) AS count FROM auth_request_file_cleanup');
+        res.json({
+            status: 'ok',
+            service: 'authorization-manager',
+            dataClass: 'confirmed_ephi',
+            safeForAgentPolling: true,
+            pendingFileCleanup: pending.count,
+            time: new Date().toISOString()
+        });
+    } catch (error) {
+        res.status(503).json({ error: 'Database migration failed' });
+    }
 });
 
 // --- Clients ---
@@ -596,32 +742,58 @@ app.put('/api/clients/:id', async (req, res) => {
     }
 });
 
-app.delete('/api/clients/:id', (req, res) => {
-    db.all("SELECT pdf_path, intakeq_uploaded_at FROM auth_requests WHERE client_id = ?", [req.params.id], async (selectErr, rows = []) => {
-        if (selectErr) return res.status(500).json({ error: selectErr.message });
-        if (rows.some(isImmutableAuthorization)) {
+app.delete('/api/clients/:id', async (req, res) => {
+    try {
+        await db.migrationReady;
+        const deletion = await withImmediateTransaction(async tx => {
+            const client = await tx.get("SELECT id FROM clients WHERE id = ?", [req.params.id]);
+            if (!client) return { outcome: 'not_found' };
+
+            const rows = await tx.all(`
+                SELECT id, pdf_path, intakeq_uploaded_at, fax_status
+                FROM auth_requests
+                WHERE client_id = ?
+            `, [req.params.id]);
+            if (rows.some(isImmutableAuthorization)) return { outcome: 'immutable' };
+            if (rows.some(isSuccessfullyFaxedAuthorization)) return { outcome: 'faxed' };
+
+            const cleanups = [];
+            for (const row of rows) {
+                if (row.pdf_path) {
+                    const queued = await tx.run(`
+                        INSERT INTO auth_request_file_cleanup (auth_request_id, pdf_path)
+                        VALUES (?, ?)
+                    `, [row.id, row.pdf_path]);
+                    cleanups.push({ id: queued.lastID, pdf_path: row.pdf_path });
+                }
+                await tx.run(`
+                    INSERT INTO auth_request_deletions (auth_request_id, trace_id)
+                    VALUES (?, ?)
+                `, [row.id, req.traceId || null]);
+            }
+
+            await tx.run("DELETE FROM auth_requests WHERE client_id = ?", [req.params.id]);
+            const result = await tx.run("DELETE FROM clients WHERE id = ?", [req.params.id]);
+            if (result.changes !== 1) throw new Error('Client delete did not affect exactly one record');
+            return { outcome: 'deleted', changes: result.changes, cleanups };
+        });
+
+        if (deletion.outcome === 'not_found') return res.status(404).json({ error: "Client not found" });
+        if (deletion.outcome === 'immutable') {
             return res.status(409).json({
                 error: "Client has an authorization uploaded to IntakeQ. Delete is blocked because uploaded authorizations are immutable."
             });
         }
+        if (deletion.outcome === 'faxed') return sendFaxedAuthorizationDeleteResponse(res);
 
-        try {
-            await runDb('BEGIN');
-            await runDb("DELETE FROM auth_requests WHERE client_id = ?", [req.params.id]);
-            const result = await runDb("DELETE FROM clients WHERE id = ?", [req.params.id]);
-            await runDb('COMMIT');
-
-            for (const row of rows) {
-                if (row.pdf_path && fs.existsSync(row.pdf_path)) {
-                    try { fs.unlinkSync(row.pdf_path); } catch {}
-                }
-            }
-            res.json({ changes: result.changes });
-        } catch (err) {
-            await rollbackQuietly();
-            res.status(500).json({ error: err.message });
+        let cleanupPending = false;
+        for (const cleanup of deletion.cleanups) {
+            if (await attemptAuthFileCleanup(cleanup)) cleanupPending = true;
         }
-    });
+        res.json({ changes: deletion.changes, cleanupPending });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 // --- PCP Directory ---
@@ -729,19 +901,19 @@ app.put('/api/pcp-directory/:id', async (req, res) => {
         if (duplicate) {
             return res.status(409).json({ error: "A PCP with this NPI already exists." });
         }
-        await runDb('BEGIN');
-        const result = await runDb(
-            "UPDATE primary_care_providers SET name = ?, phone = ?, npi = ? WHERE id = ?",
-            [data.name, data.phone, data.npi, req.params.id]
-        );
-        await runDb(
-            "UPDATE clients SET pcp = ?, pcp_phone = ?, pcp_npi = ? WHERE primary_care_provider_id = ?",
-            [data.name, data.phone, data.npi, req.params.id]
-        );
-        await runDb('COMMIT');
+        const result = await withImmediateTransaction(async tx => {
+            const update = await tx.run(
+                "UPDATE primary_care_providers SET name = ?, phone = ?, npi = ? WHERE id = ?",
+                [data.name, data.phone, data.npi, req.params.id]
+            );
+            await tx.run(
+                "UPDATE clients SET pcp = ?, pcp_phone = ?, pcp_npi = ? WHERE primary_care_provider_id = ?",
+                [data.name, data.phone, data.npi, req.params.id]
+            );
+            return update;
+        });
         res.json({ changes: result.changes });
     } catch (err) {
-        await rollbackQuietly();
         if (err.code === 'SQLITE_CONSTRAINT') {
             return res.status(409).json({ error: "A PCP with this NPI already exists." });
         }
@@ -1115,19 +1287,42 @@ app.get('/api/auth-requests/:id/preview', (req, res) => {
     });
 });
 
-app.delete('/api/auth-requests/:id', (req, res) => {
-    db.get("SELECT pdf_path, intakeq_uploaded_at FROM auth_requests WHERE id = ?", [req.params.id], (err, row) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!row) return res.status(404).json({ error: "Not found" });
-        if (isImmutableAuthorization(row)) return sendImmutableAuthorizationResponse(res);
-        if (row && row.pdf_path && fs.existsSync(row.pdf_path)) {
-            try { fs.unlinkSync(row.pdf_path); } catch (e) { }
-        }
-        db.run("DELETE FROM auth_requests WHERE id = ?", [req.params.id], function (err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ changes: this.changes });
+app.delete('/api/auth-requests/:id', async (req, res) => {
+    try {
+        await db.migrationReady;
+        const deletion = await withImmediateTransaction(async tx => {
+            const row = await tx.get("SELECT * FROM auth_requests WHERE id = ?", [req.params.id]);
+            if (!row) return { outcome: 'not_found' };
+            if (isImmutableAuthorization(row)) return { outcome: 'immutable' };
+            if (isSuccessfullyFaxedAuthorization(row)) return { outcome: 'faxed' };
+
+            let cleanup = null;
+            if (row.pdf_path) {
+                const queued = await tx.run(`
+                    INSERT INTO auth_request_file_cleanup (auth_request_id, pdf_path)
+                    VALUES (?, ?)
+                `, [row.id, row.pdf_path]);
+                cleanup = { id: queued.lastID, pdf_path: row.pdf_path };
+            }
+
+            const result = await tx.run("DELETE FROM auth_requests WHERE id = ?", [req.params.id]);
+            if (result.changes !== 1) throw new Error('Authorization delete did not affect exactly one record');
+            await tx.run(`
+                INSERT INTO auth_request_deletions (auth_request_id, trace_id)
+                VALUES (?, ?)
+            `, [row.id, req.traceId || null]);
+            return { outcome: 'deleted', changes: result.changes, cleanup };
         });
-    });
+
+        if (deletion.outcome === 'not_found') return res.status(404).json({ error: "Not found" });
+        if (deletion.outcome === 'immutable') return sendImmutableAuthorizationResponse(res);
+        if (deletion.outcome === 'faxed') return sendFaxedAuthorizationDeleteResponse(res);
+
+        const cleanupPending = await attemptAuthFileCleanup(deletion.cleanup);
+        res.json({ changes: deletion.changes, cleanupPending });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 app.put('/api/auth-requests/:id', (req, res) => {
@@ -1794,15 +1989,30 @@ app.get('/api/intakeq/files', async (req, res) => {
 app.use(createErrorLogger());
 
 // --- Server Start ---
-if (require.main === module) {
+async function startServer() {
+    assertStartupAuthConfiguration();
+    try {
+        await db.migrationReady;
+        await retryPendingAuthFileCleanup();
+    } catch (error) {
+        console.error(`Database migration failed: ${error.message}`);
+        process.exitCode = 1;
+        return;
+    }
     installProcessErrorLogging();
-    app.listen(port, () => {
-        console.log(`Auth Forms app listening at http://localhost:${port}`);
+    app.listen(port, host, () => {
+        console.log(`Auth Forms app listening at http://${host}:${port}`);
         if (!configuredApiToken) {
-            console.log(`API token for this session: ${apiToken}`);
-            console.log('Set AUTH_FORMS_API_TOKEN to use a stable token.');
+            console.log('Explicit tokenless loopback development mode is enabled.');
         }
         console.log(`Trace log: ${process.env.AUTH_FORMS_TRACE_LOG || DEFAULT_LOG_FILE}`);
+    });
+}
+
+if (require.main === module) {
+    startServer().catch(error => {
+        console.error(`Server startup failed: ${error.message}`);
+        process.exitCode = 1;
     });
 }
 

@@ -68,6 +68,28 @@ test('request tracer drops query strings while preserving the route path', async
     }
 });
 
+test('request tracer rejects arbitrary client trace text and emits a server UUID', async () => {
+    const entries = [];
+    const app = express();
+
+    app.use(createRequestTracer({ sink: entry => entries.push(entry) }));
+    app.get('/ok', (req, res) => res.json({ traceId: req.traceId }));
+
+    const server = await startApp(app);
+    try {
+        const response = await fetch(`${server.baseUrl}/ok`, {
+            headers: { 'x-trace-id': 'SYNTHETIC-SENSITIVE-TEXT-MUST-NOT-PERSIST' }
+        });
+        const body = await response.json();
+
+        assert.match(body.traceId, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+        assert.notEqual(body.traceId, 'SYNTHETIC-SENSITIVE-TEXT-MUST-NOT-PERSIST');
+        assert.equal(entries[0].trace_id, body.traceId);
+    } finally {
+        await server.close();
+    }
+});
+
 test('error logger emits request error with trace id and message', async () => {
     const entries = [];
     const app = express();

@@ -4,6 +4,7 @@ const fs = require('fs');
 
 const dbPath = process.env.DB_PATH || path.join(__dirname, 'database.sqlite');
 const db = new sqlite3.Database(dbPath);
+db.configure('busyTimeout', 5000);
 
 db.serialize(() => {
     db.run('PRAGMA foreign_keys = ON');
@@ -112,6 +113,27 @@ db.serialize(() => {
             fax_sent_date TEXT,
             fax_to_number TEXT,
             FOREIGN KEY (client_id) REFERENCES clients(id)
+        )
+    `);
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS auth_request_deletions (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            auth_request_id INTEGER NOT NULL,
+            deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            trace_id TEXT
+        )
+    `);
+
+    db.run(`
+        CREATE TABLE IF NOT EXISTS auth_request_file_cleanup (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            auth_request_id INTEGER NOT NULL,
+            pdf_path TEXT NOT NULL,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_attempt_at DATETIME,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            last_error_code TEXT
         )
     `);
 
@@ -266,6 +288,44 @@ db.serialize(() => {
             // Don't drop facilities yet, rename it to avoid breaking older APIs running concurrently
             db.run("ALTER TABLE facilities RENAME TO old_facilities", (err) => {});
         }
+    });
+
+    // Replace the legacy deletion audit with a minimal event record. The legacy
+    // table duplicated PHI-bearing authorization data, defeating deletion.
+    db.migrationReady = new Promise((resolve, reject) => {
+        db.all('PRAGMA table_info(auth_request_deletions)', [], (schemaError, columns) => {
+            if (schemaError) return reject(schemaError);
+
+            const minimalColumns = new Set(['id', 'auth_request_id', 'deleted_at', 'trace_id']);
+            const hasLegacyColumns = columns.some(column => !minimalColumns.has(column.name));
+            if (!hasLegacyColumns) return resolve();
+
+            db.exec(`
+                PRAGMA secure_delete = ON;
+                BEGIN IMMEDIATE;
+                DROP TABLE IF EXISTS auth_request_deletions_minimal;
+                CREATE TABLE auth_request_deletions_minimal (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    auth_request_id INTEGER NOT NULL,
+                    deleted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    trace_id TEXT
+                );
+                INSERT INTO auth_request_deletions_minimal (
+                    id, auth_request_id, deleted_at, trace_id
+                )
+                SELECT id, auth_request_id, deleted_at, NULL
+                FROM auth_request_deletions;
+                DROP TABLE auth_request_deletions;
+                ALTER TABLE auth_request_deletions_minimal RENAME TO auth_request_deletions;
+                COMMIT;
+                PRAGMA wal_checkpoint(TRUNCATE);
+                VACUUM;
+                PRAGMA wal_checkpoint(TRUNCATE);
+            `, migrationError => {
+                if (!migrationError) return resolve();
+                db.run('ROLLBACK', () => reject(migrationError));
+            });
+        });
     });
     
     console.log("Database initialized at", dbPath);

@@ -1,19 +1,125 @@
 // === APP STATE ===
 const API_TOKEN_STORAGE_KEY = 'authFormsApiToken';
 const nativeFetch = window.fetch.bind(window);
+let apiTokenDialogPromise = null;
 
 function usesDashboardProxyAuth() {
     return window.AUTH_FORMS_PROXY_AUTH === true;
 }
 
-function getApiToken() {
-    let token = sessionStorage.getItem(API_TOKEN_STORAGE_KEY) || '';
-    while (!token) {
-        token = window.prompt('Enter the Auth Forms API token') || '';
-        token = token.trim();
-    }
-    sessionStorage.setItem(API_TOKEN_STORAGE_KEY, token);
-    return token;
+function requestApiTokenViaDialog(message = 'Enter the Auth Forms API token') {
+    if (apiTokenDialogPromise) return apiTokenDialogPromise;
+
+    apiTokenDialogPromise = new Promise(resolve => {
+        const previouslyFocusedElement = document.activeElement;
+        const existing = document.getElementById('api-token-dialog');
+        if (existing) existing.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'api-token-dialog';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(15,23,42,0.62);display:flex;align-items:center;justify-content:center;padding:20px;';
+
+        const panel = document.createElement('form');
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'true');
+        panel.style.cssText = 'width:min(420px,100%);background:#fff;border-radius:8px;padding:22px;box-shadow:0 24px 80px rgba(15,23,42,0.35);display:grid;gap:14px;';
+
+        const title = document.createElement('h3');
+        title.id = 'api-token-dialog-title';
+        title.textContent = 'Auth Forms API Token';
+        title.style.margin = '0';
+
+        const copy = document.createElement('p');
+        copy.id = 'api-token-dialog-description';
+        copy.textContent = message;
+        copy.style.cssText = 'margin:0;color:#475569;font-size:0.95rem;';
+
+        panel.setAttribute('aria-labelledby', title.id);
+        panel.setAttribute('aria-describedby', copy.id);
+
+        const label = document.createElement('label');
+        label.textContent = 'API token';
+        label.style.fontWeight = '600';
+
+        const input = document.createElement('input');
+        input.id = 'api-token-input';
+        input.type = 'password';
+        input.autocomplete = 'off';
+        input.required = true;
+        input.style.cssText = 'width:100%;padding:10px;border:1px solid #cbd5e1;border-radius:6px;font-size:1rem;';
+        label.htmlFor = input.id;
+
+        const actions = document.createElement('div');
+        actions.style.cssText = 'display:flex;gap:10px;justify-content:flex-end;';
+
+        const cancelButton = document.createElement('button');
+        cancelButton.type = 'button';
+        cancelButton.textContent = 'Cancel';
+        cancelButton.style.cssText = 'padding:10px 14px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;font-weight:600;cursor:pointer;';
+
+        const button = document.createElement('button');
+        button.type = 'submit';
+        button.textContent = 'Continue';
+        button.style.cssText = 'padding:10px 14px;border:0;border-radius:6px;background:#4f46e5;color:#fff;font-weight:600;cursor:pointer;';
+
+        actions.append(cancelButton, button);
+        panel.append(title, copy, label, input, actions);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        setTimeout(() => input.focus(), 0);
+
+        const settle = token => {
+            overlay.remove();
+            apiTokenDialogPromise = null;
+            if (previouslyFocusedElement && typeof previouslyFocusedElement.focus === 'function') {
+                previouslyFocusedElement.focus();
+            }
+            resolve(token);
+        };
+
+        cancelButton.addEventListener('click', () => settle(null));
+
+        overlay.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                settle(null);
+                return;
+            }
+            if (e.key !== 'Tab') return;
+
+            const focusableElements = [input, cancelButton, button];
+            const first = focusableElements[0];
+            const last = focusableElements[focusableElements.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        });
+
+        panel.addEventListener('submit', e => {
+            e.preventDefault();
+            const token = input.value.trim();
+            if (!token) return;
+            sessionStorage.setItem(API_TOKEN_STORAGE_KEY, token);
+            settle(token);
+        });
+    });
+
+    return apiTokenDialogPromise;
+}
+
+function isReplaySafeRequest(input, init) {
+    const method = String(init.method || (typeof Request !== 'undefined' && input instanceof Request ? input.method : 'GET')).toUpperCase();
+    return ['GET', 'HEAD', 'OPTIONS'].includes(method);
+}
+
+function requestHeaders(input, init) {
+    if (init.headers) return new Headers(init.headers);
+    if (typeof Request !== 'undefined' && input instanceof Request) return new Headers(input.headers);
+    return new Headers();
 }
 
 window.fetch = async (input, init = {}) => {
@@ -21,16 +127,30 @@ window.fetch = async (input, init = {}) => {
     const isApiRequest = typeof url === 'string' && (url.startsWith('/api') || url.includes('/api/'));
     const requestInit = Object.assign({}, init);
 
-    if (isApiRequest && !usesDashboardProxyAuth()) {
-        const headers = new Headers(requestInit.headers || {});
-        headers.set('x-auth-token', getApiToken());
+    if (isApiRequest) {
+        const headers = requestHeaders(input, requestInit);
+        if (usesDashboardProxyAuth()) {
+            headers.delete('x-auth-token');
+            sessionStorage.removeItem(API_TOKEN_STORAGE_KEY);
+        } else {
+            const storedToken = sessionStorage.getItem(API_TOKEN_STORAGE_KEY) || '';
+            if (storedToken) {
+                headers.set('x-auth-token', storedToken);
+            }
+        }
         requestInit.headers = headers;
     }
 
-    const response = await nativeFetch(input, requestInit);
+    let response = await nativeFetch(input, requestInit);
     if (isApiRequest && response.status === 401 && !usesDashboardProxyAuth()) {
         sessionStorage.removeItem(API_TOKEN_STORAGE_KEY);
-        alert('API token was rejected. Enter the current server token and try again.');
+        const retryToken = await requestApiTokenViaDialog('API token was rejected. Enter the current server token and try again.');
+        if (!retryToken || !isReplaySafeRequest(input, requestInit)) return response;
+        const retryInit = Object.assign({}, requestInit);
+        const retryHeaders = new Headers(retryInit.headers || {});
+        retryHeaders.set('x-auth-token', retryToken);
+        retryInit.headers = retryHeaders;
+        response = await nativeFetch(input, retryInit);
     }
     return response;
 };
@@ -1763,6 +1883,10 @@ function isImmutableAuth(item) {
     return item && Boolean(item.intakeq_uploaded_at);
 }
 
+function isSuccessfullyFaxedAuth(item) {
+    return item && (item.fax_status === 'Sent' || item.fax_status === 'Success');
+}
+
 async function readErrorMessage(res) {
     try {
         const body = await res.json();
@@ -1842,7 +1966,7 @@ async function loadAuthHistory(clientId) {
             if (item.is_draft) {
                 badgeHtml = '<span style="background:#6366f1;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;margin-left:8px;">Draft</span>';
                 pendingFaxesToPoll.delete(item.id);
-            } else if (item.fax_status === 'Sent' || item.fax_status === 'Success') {
+            } else if (isSuccessfullyFaxedAuth(item)) {
                 badgeHtml = '<span style="background:#22c55e;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;margin-left:8px;">✓ Faxed</span>' + clinicalBadgeHtml;
                 pendingFaxesToPoll.delete(item.id);
             } else if (isPollableFaxStatus(item.fax_status)) {
@@ -1866,8 +1990,9 @@ async function loadAuthHistory(clientId) {
             // IntakeQ upload button — only for finalised auths with a PDF
             let uploadIntakeqBtn = (!item.is_draft && !isManualEntry) ? `<button class="btn btn-ghost" title="Upload PDF to IntakeQ EMR" onclick="uploadAuthToIntakeq(${item.id})"><i class="ph ph-cloud-arrow-up"></i> IntakeQ</button>` : '';
 
-            const dateLabel = (item.fax_status === 'Sent' || item.fax_status === 'Success') ? 'Date Faxed' : (item.is_draft ? 'Last Saved' : 'Created');
-            const displayDate = (item.fax_status === 'Sent' || item.fax_status === 'Success') ? item.fax_sent_date : (item.last_updated || item.date_created);
+            const successfullyFaxed = isSuccessfullyFaxedAuth(item);
+            const dateLabel = successfullyFaxed ? 'Date Faxed' : (item.is_draft ? 'Last Saved' : 'Created');
+            const displayDate = successfullyFaxed ? item.fax_sent_date : (item.last_updated || item.date_created);
             const displayDateTime = new Date(displayDate).toLocaleString();
             const displayDateShort = new Date(displayDate).toLocaleDateString();
             const canPreview = !item.is_draft && !formData.manual_entry;
@@ -1876,12 +2001,12 @@ async function loadAuthHistory(clientId) {
             const manualBadge = isManualEntry ? '<span style="background:#0f766e;color:#fff;padding:2px 8px;border-radius:12px;font-size:0.75rem;margin-left:8px;">Manual Entry</span>' : '';
             const editAction = isManualEntry
                 ? `<button class="btn btn-ghost" onclick="editManualAuth(${item.id})"><i class="ph ph-pencil-simple"></i> Edit</button>`
-                : (immutable || item.fax_status === 'Sent' || item.fax_status === 'Success'
+                : (immutable || successfullyFaxed
                     ? `<button class="btn btn-ghost" onclick="copyAuth(${item.id})"><i class="ph ph-copy"></i> Copy</button>`
                     : `<button class="btn btn-ghost" onclick="editAuth(${item.id})"><i class="ph ph-pencil-simple"></i> Edit</button>`);
             const editIconAction = isManualEntry
                 ? `<button class="btn btn-ghost" onclick="editManualAuth(${item.id})" title="Edit manual status"><i class="ph ph-pencil-simple"></i></button>`
-                : (immutable || item.fax_status === 'Sent' || item.fax_status === 'Success'
+                : (immutable || successfullyFaxed
                     ? `<button class="btn btn-ghost" onclick="copyAuth(${item.id})" title="Copy"><i class="ph ph-copy"></i></button>`
                     : `<button class="btn btn-ghost" onclick="editAuth(${item.id})" title="Edit"><i class="ph ph-pencil-simple"></i></button>`);
 
@@ -1907,8 +2032,8 @@ async function loadAuthHistory(clientId) {
                             ${faxBtn}${refreshBtn}
                             ${uploadIntakeqBtn}
                             ${editAction}
-                            ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
-                                ? '' 
+                            ${successfullyFaxed
+                                ? ''
                                 : `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})"><i class="ph ph-trash"></i></button>`
                             }
                         </div>
@@ -1933,8 +2058,8 @@ async function loadAuthHistory(clientId) {
                             ${faxBtn ? `<span title="Fax">${faxBtn}</span>` : ''}
                             ${uploadIntakeqBtn ? `<span title="Upload to IntakeQ">${uploadIntakeqBtn}</span>` : ''}
                             ${editIconAction}
-                            ${immutable || item.fax_status === 'Sent' || item.fax_status === 'Success' 
-                                ? '' 
+                            ${successfullyFaxed
+                                ? ''
                                 : `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})" title="Delete"><i class="ph ph-trash"></i></button>`
                             }
                         </div>
@@ -2117,12 +2242,24 @@ window.closePreview = () => {
     modal.classList.remove('active');
 };
 
+function clearDeletedAuthFromActiveForm(id) {
+    const authIdInput = document.getElementById('auth_id_input');
+    if (!authIdInput || String(authIdInput.value || '') !== String(id)) return;
+
+    authIdInput.value = '';
+    const recNumSpan = document.getElementById('gen_record_number');
+    if (recNumSpan) recNumSpan.innerText = '';
+    const draftStatus = document.getElementById('draft-status');
+    if (draftStatus) draftStatus.innerText = 'Deleted authorization; next PDF will create a new record';
+}
+
 window.deleteAuth = async (id) => {
     if (!confirm("Are you sure you want to delete this auth request?")) return;
     try {
         const res = await fetch(`${API_BASE}/auth-requests/${id}`, { method: 'DELETE' });
         if (res.ok && currentClient) {
-            loadAuthHistory(currentClient.id);
+            clearDeletedAuthFromActiveForm(id);
+            await loadAuthHistory(currentClient.id);
         } else if (!res.ok) {
             alert(await readErrorMessage(res));
         }

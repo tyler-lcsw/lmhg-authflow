@@ -43,10 +43,18 @@ function baseEntry(event, fields = {}) {
     };
 }
 
+function safeTraceId(value) {
+    const candidate = String(value || '').trim();
+    if (/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate)) {
+        return candidate;
+    }
+    return crypto.randomUUID();
+}
+
 function createRequestTracer({ sink = createFileSink() } = {}) {
     return (req, res, next) => {
         const started = process.hrtime.bigint();
-        const traceId = req.get('x-trace-id') || crypto.randomUUID();
+        const traceId = safeTraceId(req.get('x-trace-id'));
 
         req.traceId = traceId;
         res.setHeader('x-trace-id', traceId);

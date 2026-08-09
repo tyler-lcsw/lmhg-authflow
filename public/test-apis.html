@@ -99,17 +99,118 @@ a { color: var(--brand); }
 </div>
 
 <script>
-const API = '/api';
 const API_TOKEN_STORAGE_KEY = 'authFormsApiToken';
+const legacyProxyPath = window.location.pathname.startsWith('/api/legacy/auth-manager');
+const API = legacyProxyPath ? '/api/legacy/auth-manager/api' : '/api';
+let apiTokenDialogPromise = null;
 
-function getApiToken() {
-    let token = sessionStorage.getItem(API_TOKEN_STORAGE_KEY) || '';
-    while (!token) {
-        token = window.prompt('Enter the Auth Forms API token') || '';
-        token = token.trim();
-    }
-    sessionStorage.setItem(API_TOKEN_STORAGE_KEY, token);
-    return token;
+function usesDashboardProxyAuth() {
+    return legacyProxyPath || window.AUTH_FORMS_PROXY_AUTH === true;
+}
+
+function requestApiTokenViaDialog(message = 'Enter the Auth Forms API token') {
+    if (apiTokenDialogPromise) return apiTokenDialogPromise;
+
+    apiTokenDialogPromise = new Promise(resolve => {
+        const previouslyFocusedElement = document.activeElement;
+        document.getElementById('api-token-dialog')?.remove();
+
+        const overlay = document.createElement('div');
+        overlay.id = 'api-token-dialog';
+        overlay.style.cssText = 'position:fixed;inset:0;z-index:10000;background:rgba(2,6,23,0.75);display:flex;align-items:center;justify-content:center;padding:20px;';
+
+        const panel = document.createElement('form');
+        panel.setAttribute('role', 'dialog');
+        panel.setAttribute('aria-modal', 'true');
+        panel.style.cssText = 'width:min(420px,100%);background:#1e293b;border:1px solid #475569;border-radius:8px;padding:22px;display:grid;gap:14px;';
+
+        const title = document.createElement('h2');
+        title.id = 'api-token-dialog-title';
+        title.textContent = 'Auth Forms API Token';
+
+        const copy = document.createElement('p');
+        copy.id = 'api-token-dialog-description';
+        copy.textContent = message;
+        copy.className = 'hint';
+
+        panel.setAttribute('aria-labelledby', title.id);
+        panel.setAttribute('aria-describedby', copy.id);
+
+        const label = document.createElement('label');
+        label.textContent = 'API token';
+        label.style.fontWeight = '600';
+
+        const input = document.createElement('input');
+        input.id = 'api-token-input';
+        input.type = 'password';
+        input.autocomplete = 'off';
+        input.required = true;
+        input.style.cssText = 'width:100%;padding:10px;border:1px solid #475569;border-radius:6px;background:#0b1220;color:#f1f5f9;font:inherit;';
+        label.htmlFor = input.id;
+
+        const actions = document.createElement('div');
+        actions.className = 'row';
+        actions.style.justifyContent = 'flex-end';
+
+        const cancelButton = document.createElement('button');
+        cancelButton.type = 'button';
+        cancelButton.textContent = 'Cancel';
+        cancelButton.className = 'secondary';
+
+        const continueButton = document.createElement('button');
+        continueButton.type = 'submit';
+        continueButton.textContent = 'Continue';
+
+        actions.append(cancelButton, continueButton);
+        panel.append(title, copy, label, input, actions);
+        overlay.appendChild(panel);
+        document.body.appendChild(overlay);
+        setTimeout(() => input.focus(), 0);
+
+        const settle = token => {
+            overlay.remove();
+            apiTokenDialogPromise = null;
+            if (previouslyFocusedElement && typeof previouslyFocusedElement.focus === 'function') {
+                previouslyFocusedElement.focus();
+            }
+            resolve(token);
+        };
+
+        cancelButton.addEventListener('click', () => settle(null));
+        overlay.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                e.preventDefault();
+                settle(null);
+                return;
+            }
+            if (e.key !== 'Tab') return;
+
+            const focusableElements = [input, cancelButton, continueButton];
+            const first = focusableElements[0];
+            const last = focusableElements[focusableElements.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        });
+
+        panel.addEventListener('submit', e => {
+            e.preventDefault();
+            const token = input.value.trim();
+            if (!token) return;
+            sessionStorage.setItem(API_TOKEN_STORAGE_KEY, token);
+            settle(token);
+        });
+    });
+
+    return apiTokenDialogPromise;
+}
+
+function isReplaySafeMethod(method = 'GET') {
+    return ['GET', 'HEAD', 'OPTIONS'].includes(String(method).toUpperCase());
 }
 
 function show(elId, ok, data) {
@@ -133,13 +234,34 @@ function setOutput(el, cls, prefix, detail = '') {
 async function call(url, init = {}) {
     const requestInit = Object.assign({}, init);
     const headers = new Headers(requestInit.headers || {});
-    headers.set('x-auth-token', getApiToken());
+    if (usesDashboardProxyAuth()) {
+        headers.delete('x-auth-token');
+        sessionStorage.removeItem(API_TOKEN_STORAGE_KEY);
+    } else {
+        const storedToken = sessionStorage.getItem(API_TOKEN_STORAGE_KEY) || '';
+        if (storedToken) headers.set('x-auth-token', storedToken);
+    }
     requestInit.headers = headers;
 
-    const resp = await fetch(url, requestInit);
-    if (resp.status === 401) {
+    let resp = await fetch(url, requestInit);
+    let result = await readResult(resp);
+    if (resp.status === 401 && !usesDashboardProxyAuth()) {
         sessionStorage.removeItem(API_TOKEN_STORAGE_KEY);
+        const retryToken = await requestApiTokenViaDialog('API token was rejected. Enter the current server token, then retry unsafe actions manually.');
+        if (!retryToken || !isReplaySafeMethod(requestInit.method)) return result;
+
+        const retryInit = Object.assign({}, requestInit);
+        const retryHeaders = new Headers(retryInit.headers || {});
+        retryHeaders.set('x-auth-token', retryToken);
+        retryInit.headers = retryHeaders;
+        resp = await fetch(url, retryInit);
+        result = await readResult(resp);
+        if (resp.status === 401) sessionStorage.removeItem(API_TOKEN_STORAGE_KEY);
     }
+    return result;
+}
+
+async function readResult(resp) {
     const text = await resp.text();
     let parsed;
     try { parsed = text ? JSON.parse(text) : {}; } catch { parsed = { raw: text }; }

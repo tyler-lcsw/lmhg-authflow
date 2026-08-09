@@ -15,14 +15,29 @@ async function startTestServer(options = {}) {
     const previousDbPath = process.env.DB_PATH;
     const previousApiToken = process.env.AUTH_FORMS_API_TOKEN;
     const previousBypassAuth = process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
+    const previousAllowTokenlessLoopback = process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK;
+    const previousUploadDir = process.env.AUTH_FORMS_UPLOAD_DIR;
+    const previousOutputDir = process.env.AUTH_FORMS_OUTPUT_DIR;
 
     process.env.DB_PATH = path.join(tmpDir, 'test.sqlite');
+    process.env.AUTH_FORMS_UPLOAD_DIR = path.join(tmpDir, 'uploads');
+    process.env.AUTH_FORMS_OUTPUT_DIR = path.join(tmpDir, 'output');
     if (options.requireAuth) {
         process.env.AUTH_FORMS_API_TOKEN = options.apiToken || 'test-api-token';
         delete process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
+        delete process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK;
+    } else if (options.allowTokenlessLoopback) {
+        process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK = '1';
+        delete process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
+        delete process.env.AUTH_FORMS_API_TOKEN;
+    } else if (options.disableAuthWithoutBypass) {
+        delete process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
+        delete process.env.AUTH_FORMS_API_TOKEN;
+        delete process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK;
     } else {
         process.env.AUTH_FORMS_TEST_BYPASS_AUTH = '1';
         delete process.env.AUTH_FORMS_API_TOKEN;
+        delete process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK;
     }
 
     // Invalidate module cache so a fresh server+db is created per test server
@@ -45,6 +60,7 @@ async function startTestServer(options = {}) {
         baseUrl,
         db,
         tmpDir,
+        outputDir: process.env.AUTH_FORMS_OUTPUT_DIR,
         apiToken: process.env.AUTH_FORMS_API_TOKEN,
         authHeaders: process.env.AUTH_FORMS_API_TOKEN
             ? { 'x-auth-token': process.env.AUTH_FORMS_API_TOKEN }
@@ -59,6 +75,12 @@ async function startTestServer(options = {}) {
             else process.env.AUTH_FORMS_API_TOKEN = previousApiToken;
             if (previousBypassAuth === undefined) delete process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
             else process.env.AUTH_FORMS_TEST_BYPASS_AUTH = previousBypassAuth;
+            if (previousAllowTokenlessLoopback === undefined) delete process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK;
+            else process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK = previousAllowTokenlessLoopback;
+            if (previousUploadDir === undefined) delete process.env.AUTH_FORMS_UPLOAD_DIR;
+            else process.env.AUTH_FORMS_UPLOAD_DIR = previousUploadDir;
+            if (previousOutputDir === undefined) delete process.env.AUTH_FORMS_OUTPUT_DIR;
+            else process.env.AUTH_FORMS_OUTPUT_DIR = previousOutputDir;
         }
     };
 }

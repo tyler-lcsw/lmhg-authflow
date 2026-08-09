@@ -32,3 +32,8 @@ test('editAuth blocks immutable authorizations', () => {
     assert.match(editBody, /This authorization is immutable/);
     assert.match(editBody, /isImmutableAuth\(auth\)/);
 });
+
+test('deleteAuth clears the active hidden auth id after deleting the same authorization', () => {
+    const deleteBody = functionBody('deleteAuth');
+    assert.match(deleteBody, /clearDeletedAuthFromActiveForm\(id\)/);
+});

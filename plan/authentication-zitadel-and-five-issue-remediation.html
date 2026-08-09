@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Authorization Manager authentication and remediation plan</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f5f7fb;
+      --panel: #ffffff;
+      --text: #172033;
+      --muted: #5d687a;
+      --border: #d9deea;
+      --accent: #3346a8;
+      --good: #11643a;
+      --warn: #8a5700;
+      --open: #7b2d3b;
+      --code: #eef1f7;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #10141d;
+        --panel: #171d29;
+        --text: #edf1f7;
+        --muted: #aeb8c9;
+        --border: #343d4e;
+        --accent: #9faeff;
+        --good: #7bd9a7;
+        --warn: #f0c06b;
+        --open: #f2a4b1;
+        --code: #222a38;
+      }
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 16px/1.55 system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    main { width: min(1100px, calc(100% - 32px)); margin: 32px auto 72px; }
+    header, section {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 24px;
+      margin-bottom: 18px;
+    }
+    h1, h2, h3 { line-height: 1.2; }
+    h1 { margin: 0 0 8px; font-size: clamp(1.8rem, 4vw, 2.7rem); }
+    h2 { margin-top: 0; }
+    h3 { margin-bottom: 8px; }
+    p { max-width: 80ch; }
+    .lede { color: var(--muted); font-size: 1.08rem; }
+    .meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
+    .tag {
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+      font-size: .9rem;
+    }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { border-bottom: 1px solid var(--border); padding: 10px; text-align: left; vertical-align: top; }
+    th { color: var(--muted); font-size: .9rem; }
+    code, pre { background: var(--code); border-radius: 6px; }
+    code { padding: 2px 5px; }
+    pre { padding: 16px; overflow-x: auto; }
+    .confirmed { color: var(--good); font-weight: 700; }
+    .partial { color: var(--warn); font-weight: 700; }
+    .unknown { color: var(--open); font-weight: 700; }
+    .task { border-top: 1px solid var(--border); padding-top: 18px; margin-top: 18px; }
+    .task:first-of-type { border-top: 0; padding-top: 0; }
+    ul, ol { padding-left: 1.35rem; }
+    li + li { margin-top: 6px; }
+    .checkpoint { border-left: 5px solid var(--accent); padding-left: 16px; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Authorization Manager authentication and five-issue remediation plan</h1>
+    <p class="lede">Plan-only artifact for aligning the legacy Auth Forms service with the staff dashboard and ZITADEL, while resolving the five commit blockers identified in the current worktree.</p>
+    <div class="meta">
+      <span class="tag">Prepared 2026-08-09</span>
+      <span class="tag">Plan only</span>
+      <span class="tag">PHI-safe verification</span>
+      <span class="tag">Username + password initial goal</span>
+    </div>
+  </header>
+
+  <section>
+    <h2>Outcome</h2>
+    <p>Staff authenticate with an administratively created ZITADEL local account using a username and password. The dashboard completes Authorization Code flow with PKCE, stores the resulting application session only in secure HttpOnly cookies, enforces the <code>developer</code> role and ePHI confirmation during integration, and proxies Authorization Manager requests. The browser receives neither ZITADEL tokens nor the Authorization Manager service token.</p>
+    <p>Authorization Manager remains defense-in-depth protected: production requires a service token and a private network path; tokenless development is an explicit loopback-only mode. This preserves ZITADEL as the user-authentication authority without treating the legacy service as publicly trusted merely because integration is underway.</p>
+  </section>
+
+  <section>
+    <h2>Current ZITADEL and dashboard state</h2>
+    <table>
+      <thead><tr><th>State</th><th>Finding</th><th>Evidence / limitation</th></tr></thead>
+      <tbody>
+        <tr><td class="confirmed">Confirmed live</td><td>Issuer is <code>https://auth.lmhg.app</code>.</td><td>OIDC discovery returned the expected issuer and endpoints.</td></tr>
+        <tr><td class="confirmed">Confirmed live</td><td>The dashboard starts Authorization Code flow with PKCE S256.</td><td><code>/api/login</code> returned a 302 to ZITADEL with the expected client, callback, audience/roles scopes, state, nonce, and code challenge. State, verifier, and nonce cookies were Secure, HttpOnly, and SameSite=Lax.</td></tr>
+        <tr><td class="confirmed">Confirmed live</td><td>Unauthenticated dashboard, module, confirmation, and legacy proxy routes are gated.</td><td><code>/api/me</code>, <code>/dashboard</code>, <code>/modules</code>, <code>/confirm/authorization-manager</code>, and <code>/api/legacy/auth-manager/</code> returned 401.</td></tr>
+        <tr><td class="confirmed">Confirmed live</td><td>The first hosted-login step visibly asks for Username only.</td><td>No self-registration, social identity provider, passkey, or passwordless option was visible. The only unrelated browser error was a missing favicon.</td></tr>
+        <tr><td class="partial">Previously verified</td><td>A non-PHI development user completed username/password login, returned through the callback, received a dashboard session with <code>developer</code>, saw Authorization Manager, and logged out without tokens in web storage.</td><td>Documented 2026-06-06; this needs a fresh staging-user rerun after policy confirmation.</td></tr>
+        <tr><td class="unknown">Not publicly verifiable</td><td>Current administrative login policy.</td><td>Public pages cannot prove whether Username Password is enabled, registration and external IDPs are disabled, passkeys are disabled, Force MFA flags are off, or MFA-init prompting is zero. Inspect through the ZITADEL console or authenticated API.</td></tr>
+        <tr><td class="confirmed">Confirmed live</td><td>Dell is now the authoritative host for the dashboard API, ZITADEL, and Authorization Manager; the former OVH dashboard API and Caddy services are inactive.</td><td>On Dell, the dashboard API listens on <code>127.0.0.1:4010</code>, the ZITADEL proxy on <code>127.0.0.1:18080</code>, and the ZITADEL API/login/Postgres containers are healthy.</td></tr>
+        <tr><td class="partial">Confirmed drift</td><td>Authorization Manager is co-located with the dashboard but still publishes <code>100.70.222.25:3100</code>.</td><td>Container metadata shows a Tailscale host-port binding even though both services now run on Dell. Confirm the dashboard's exact upstream value, then converge the host binding to loopback.</td></tr>
+      </tbody>
+    </table>
+    <h3>Observation provenance</h3>
+    <p>Live probes were run from <code>m4-mini.local</code> on <code>2026-08-09T16:56:39Z</code> against local source commit <code>2a6e7c9f070844f060618e1702caa5ec33d42208</code> with the documented dirty worktree preserved. Tailscale SSH was verified from <code>m4-mini.local</code> to retired OVH host <code>vps-1af14a03</code> as <code>codeverlan</code> and to Dell host <code>dell-4229</code> as <code>tyler</code>, both with exit status 0. Implementation Task 1 must save sanitized commands and outputs as durable evidence rather than relying on this plan summary.</p>
+  </section>
+
+  <section>
+    <h2>Initial ZITADEL policy target</h2>
+    <ul>
+      <li>Keep OIDC Authorization Code + PKCE; “username and password only” describes the hosted user-authentication method, not the OAuth grant type.</li>
+      <li>Use each staff member's email address as the ZITADEL login username.</li>
+      <li>Enable <strong>Username Password allowed</strong>.</li>
+      <li>Disable public self-registration.</li>
+      <li>Disable external identity-provider login and account creation for this initial phase.</li>
+      <li>Disable passkeys/passwordless and do not request passkey registration.</li>
+      <li>Disable <strong>Force MFA</strong> and <strong>Force MFA for local authenticated users</strong>; set MFA-init prompting so users are not asked to enroll during the initial phase.</li>
+      <li>Create users administratively, set an initial password, and require password change on first login with the ZITADEL v2 field <code>human.password.changeRequired=true</code>.</li>
+      <li>Disable self-service password reset; password resets are administrator-only during this phase.</li>
+      <li>Keep the current <code>developer</code>-only Authorization Manager permission and ePHI confirmation gate during integration.</li>
+      <li>Define a lockout threshold and password-complexity policy before inviting staging users; “password only” must not mean “no brute-force protection.”</li>
+      <li>Before mutation, export the effective inherited policy and record exact rollback operations, policy scope, administrator owner, and behavior for users who already have MFA or passkey factors.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>Target trust boundaries</h2>
+    <pre>Staff browser
+  └─ username + password → ZITADEL hosted login
+       └─ authorization code + PKCE → Dashboard backend
+            ├─ opaque Secure HttpOnly session ID; ZITADEL tokens stay server-side
+            ├─ current ZITADEL project-role check on every proxy request
+            ├─ signed/session-bound ePHI confirmation on every proxy request
+            └─ legacy token + signed actor assertion → Authorization Manager
+                                           └─ PHI-bearing SQLite/PDF runtime
+
+Forbidden paths:
+  browser ─X─ legacy service token
+  browser ─X─ ZITADEL tokens in web storage
+  public network ─X─ tokenless Authorization Manager APIs
+  agent verification ─X─ PHI rows, PDFs, uploads, or API payloads</pre>
+  </section>
+
+  <section>
+    <h2>Dependency-ordered implementation tasks</h2>
+
+    <article class="task">
+      <h3>Task 0 — Restore safety guidance before implementation</h3>
+      <p><strong>Description:</strong> Restore the deleted <code>CLAUDE.md</code> from <code>HEAD</code> before any implementation or runtime maintenance, preserving its local-data and PHI safeguards.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li><code>CLAUDE.md</code> is restored without silently rewriting user-authored guidance.</li>
+        <li>Local database, PDFs, uploads, logs, and backups remain untouched.</li>
+        <li>Any later documentation changes are reviewed separately against verified runtime truth.</li>
+      </ul>
+      <p><strong>Verification:</strong> Compare restored content with <code>HEAD:CLAUDE.md</code> and confirm only documentation state changed.</p>
+      <p><strong>Dependencies:</strong> None. <strong>Likely file:</strong> <code>CLAUDE.md</code>. <strong>Scope:</strong> Extra small.</p>
+    </article>
+
+    <article class="task">
+      <h3>Task 1 — Capture the authoritative runtime and policy baseline</h3>
+      <p><strong>Description:</strong> Turn the current live observations into reproducible metadata-only evidence and inspect the effective ZITADEL policy through authenticated administration.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li>Record timestamp, source/destination hosts, remote user, exit status, source commits, service/container state, dashboard upstream, Authorization Manager listener, and firewall scope.</li>
+        <li>Export the effective inherited ZITADEL policy without secrets, including username/password, registration, external IDP, passkey, MFA, domain-login, password, lockout, and existing-factor behavior.</li>
+        <li>Save sanitized commands and outputs under Dell evidence with every claim classified as confirmed, historical, conflicting, or unknown.</li>
+      </ul>
+      <p><strong>Verification:</strong> Public discovery/route probes, read-only Dell metadata, dashboard configuration metadata, and ZITADEL console/API policy review. Do not call PHI-returning routes.</p>
+      <p><strong>Dependencies:</strong> Task 0. <strong>Scope:</strong> Medium, cross-system read-only.</p>
+    </article>
+
+    <article class="task">
+      <h3>Task 2 — Define and harden the dashboard session and proxy contract</h3>
+      <p><strong>Description:</strong> Make the dashboard the explicit identity-propagation boundary instead of assuming PKCE alone proves a secure session or trusted audit actor.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li>The browser cookie contains only an opaque session identifier. ZITADEL credentials and current role state remain in protected server-side storage with signing/encryption key rotation, fixation prevention, idle and absolute expiry, role refresh/revocation behavior, CSRF protection for state changes, and logout invalidation.</li>
+        <li>The callback consumes one-time state, authorization code, PKCE verifier, and nonce, then validates a pinned signing algorithm/JWKS key, exact issuer, audience and <code>azp</code> rules, nonce, expiry, issued-at/not-before, and required claims. Missing, duplicate, replayed, substituted, or wrongly issued values fail closed.</li>
+        <li>Every <code>/api/legacy/auth-manager/*</code> request verifies the active session, current <code>developer</code> permission, and a signed or server-side ePHI confirmation bound to the subject, session, Authorization Manager module, and a short expiry. Missing, expired, forged, logout-invalidated, or role-change-invalidated confirmation is denied.</li>
+        <li>The proxy strips browser-supplied <code>x-auth-token</code>, <code>Authorization</code>, and actor headers; forbids redirects and non-allowlisted upstream paths; and redacts tokens from logs/errors. It injects the legacy token plus <code>x-lmhg-actor-assertion</code>: an asymmetrically signed JWT containing issuer <code>dashboard.lmhg.app</code>, audience <code>authorization-manager</code>, subject, session ID, current roles, HTTP method, canonical raw path/query, hash of the exact post-transformation forwarded bytes, <code>iat</code>, an <code>exp</code> no more than 60 seconds later, and unique <code>jti</code>. A shared specification rejects ambiguous/double encodings, pins the signing algorithm, trusts only an approved <code>kid</code> keyring with rotation overlap, and atomically retains replay entries through expiry plus allowed clock skew.</li>
+      </ul>
+      <p><strong>Verification:</strong> Dashboard tests cover opaque-cookie/server-token storage; callback signature/algorithm/issuer/audience/<code>azp</code>/nonce/time/required-claim validation and one-time state/code/verifier use; key rotation; idle/absolute expiry; role refresh/revocation; CSRF; hostile headers; redirects; path allowlisting; log redaction; non-developer access; and missing/expired/forged ePHI confirmation. Authorization Manager validates the actor assertion only after the legacy token, including signature/<code>kid</code>, issuer, audience, time, canonical method/path/query/body hash, atomic one-time <code>jti</code>, clock skew, rotation overlap, and ambiguous-encoding rejection; tokenless local mode rejects actor headers and records <code>local-loopback-unattributed</code>. Browser login/logout smoke proves no ZITADEL or legacy tokens appear in web storage or cookies.</p>
+      <p><strong>Dependencies:</strong> Task 1. <strong>System:</strong> Dell dashboard source/runtime. <strong>Scope:</strong> Medium.</p>
+    </article>
+
+    <article class="task">
+      <h3>Task 3 — Make Authorization Manager fail closed and converge the network path</h3>
+      <p><strong>Description:</strong> Replace implicit missing-token bypass with an explicit loopback-only development mode, require the token in production, and remove the now-unneeded Tailscale host publication after confirming the dashboard upstream.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li>Configuration matrix is explicit: local development permits no token only with <code>AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK=1</code> and <code>HOST=127.0.0.1</code>/<code>::1</code>; tests alone may use a test bypass; production/container mode requires a readable token even when Node listens on <code>0.0.0.0</code> internally.</li>
+        <li>Missing production token fails startup safely; loopback detection covers IPv4, IPv6, and IPv4-mapped IPv6; wrong or missing tokens return 401 in configured mode.</li>
+        <li>Because dashboard and service are co-located on Dell, the Docker host publication changes from <code>100.70.222.25:3100</code> to <code>127.0.0.1:3100</code> after the dashboard upstream is confirmed and updated atomically; obsolete UFW exposure is removed with rollback commands recorded.</li>
+      </ul>
+      <p><strong>Verification:</strong> TDD for the full startup/bind/auth matrix, runtime listener checks on host and inside container, dashboard connector test, non-loopback denial, and firewall/port metadata. Do not bind the containerized Node process itself to container loopback.</p>
+      <p><strong>Dependencies:</strong> Tasks 1 and 2. <strong>Likely files:</strong> <code>server.js</code>, auth test helper/integration tests, <code>deploy/dell/compose.yaml</code>, dashboard environment configuration, firewall runbook. <strong>Scope:</strong> Medium.</p>
+    </article>
+
+    <article class="task">
+      <h3>Task 4 — Align browser token behavior and accessible fallback</h3>
+      <p><strong>Description:</strong> Ensure proxy mode never asks the browser for the legacy token, audit every token-entry surface, and keep any direct token prompt limited to explicit local development.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li>Search and resolve all token UI surfaces, including <code>public/js/app.js</code> and <code>public/test-apis.html</code>; proxy mode stores/sends no legacy token and never opens a token dialog.</li>
+        <li>The local-development dialog has a labelled input, accessible dialog name, <code>role="dialog"</code>, <code>aria-modal="true"</code>, focus trap/restoration, and Escape/cancel behavior.</li>
+        <li>Automatic retry is limited to replay-safe requests; non-idempotent POST/PUT/DELETE bodies are not silently replayed after a 401 and concurrent failures settle deterministically.</li>
+      </ul>
+      <p><strong>Verification:</strong> Unit and Puppeteer tests for proxy/local modes, correct/rejected token, concurrent 401s, non-idempotent request behavior, keyboard/accessibility tree, and clean console.</p>
+      <p><strong>Dependencies:</strong> Tasks 2 and 3. <strong>Likely files:</strong> frontend token surfaces, unit tests, browser tests. <strong>Scope:</strong> Medium.</p>
+    </article>
+
+    <div class="checkpoint">
+      <h3>Checkpoint A — Authentication boundary</h3>
+      <ul>
+        <li>Approve the explicit configuration matrix and Dell loopback cutover/rollback.</li>
+        <li>Confirm dashboard session, hostile-header, actor, and connector-token tests pass.</li>
+        <li>Stop if any public/non-loopback tokenless API or browser-visible service token remains.</li>
+      </ul>
+    </div>
+
+    <article class="task">
+      <h3>Task 5 — Choose deletion semantics, minimize audit data, and make cleanup recoverable</h3>
+      <p><strong>Description:</strong> Tyler and the designated privacy/security owner must choose before implementation: (A, recommended) minimal audit event plus operational deletion, (B) reversible archive with approved retention, or (C) full erasure after a defined period.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li>The chosen branch names its decision owner, governing requirement, retention period, authorized readers, purge authority, and approval date; implementation remains blocked until that record exists, and release remains blocked until the selected migration has been executed and verified.</li>
+        <li>Minimal-audit design stores only required identifiers, time, status/outcome, trace ID, and trusted dashboard-provided ZITADEL subject—excluding form payload/PDF path unless branch B explicitly requires them.</li>
+        <li>Cleanup validates paths stay within managed output storage and uses a recoverable pending-cleanup/outbox state with retry and visible failure evidence instead of silently ignoring unlink errors.</li>
+      </ul>
+      <p><strong>Verification:</strong> Synthetic tests cover actor trust, transaction isolation/concurrency, database rollback, crash between commit/file removal, missing/out-of-scope paths, retry, and protected faxed records. Then execute the selected migration under operator approval. Branch A or C must remove prohibited payloads from existing rows and obsolete columns, purge SQLite free pages/WAL/journals, address PDFs/backups/logs/history, and ensure rollback media cannot restore prohibited data; branch B must prove the approved archive controls and expiry. Use schema and file metadata only—never PHI values—and do not create an extra backup unless its retention is approved.</p>
+      <p><strong>Dependencies:</strong> Tasks 1 and 2 plus the recorded retention decision. <strong>Likely files:</strong> <code>db.js</code>, <code>server.js</code>, deletion tests, retention/migration runbook. <strong>Scope:</strong> Medium.</p>
+    </article>
+
+    <article class="task">
+      <h3>Task 6 — Harden smoke checks and authorize the private runner</h3>
+      <p><strong>Description:</strong> Remove TLS bypass, prevent redirects from masking failures, and split public edge checks from private Dell-local connector checks.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li>No <code>curl -k</code> remains; immediate gate responses are checked without following redirects, while login start separately validates 302, ZITADEL origin, client ID, and callback with transient values redacted.</li>
+        <li>Private probes require verified Dell hostname and expected local listener/upstream context; an unauthorized runner prints a clear skip/failure instead of probing the private service.</li>
+        <li>Evidence includes timestamp, runner identity, source commit, command, expected/actual status, and sanitized output reference.</li>
+      </ul>
+      <p><strong>Verification:</strong> <code>bash -n</code>, shell fixtures for invalid certificates/redirects/wrong runner, public live metadata smoke, and Dell-local safe-status/root smoke.</p>
+      <p><strong>Dependencies:</strong> Tasks 1 and 3. <strong>Likely files:</strong> <code>deploy/dell/smoke.sh</code>, deployment documentation, shell fixtures. <strong>Scope:</strong> Small.</p>
+    </article>
+
+    <article class="task">
+      <h3>Task 7 — Configure and prove username/password-only ZITADEL staging</h3>
+      <p><strong>Description:</strong> Apply the initial ZITADEL policy at the verified effective scope with a pre-change export, exact API/console operations, and tested rollback. This phase requires a separately identified ZITADEL project/application and dashboard staging origin connected only to synthetic/non-PHI data; if that environment does not yet exist, creating and proving it is part of this task.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li>The change record identifies instance/org/project inheritance, exact settings and operations, administrator owner, pre-change export, rollback operations, and treatment of users with existing MFA/passkey factors.</li>
+        <li>Effective policy allows username/password and disables registration, external IDP creation/login, passkeys/passwordless, Force MFA, Force local MFA, and MFA-init prompting for the initial phase; password complexity and nonzero lockout are set.</li>
+        <li>A fresh non-PHI staging user is administratively created with <code>human.password.changeRequired=true</code>, no factors, and only <code>developer</code>; backup administrator/PAT recovery is verified before mutation.</li>
+        <li>The change record names the isolated staging tenant/project/application, dashboard origin, connector target, and synthetic-data boundary. Password-only access is not promoted to the PHI-bearing production module until the production authentication control is met or a named security/privacy owner approves a time-bounded risk exception and compensating controls.</li>
+      </ul>
+      <p><strong>Verification:</strong> First-login password change, callback/session properties, <code>/api/me</code> identity shape, module and ePHI gate, shell-only Authorization Manager launch, logout, no tokens in web storage, absent registration/external/passkey/MFA paths, and denial for a non-developer. Then execute a rollback dry run or reversible test at the same policy scope.</p>
+      <p><strong>Dependencies:</strong> Tasks 1–4. <strong>Systems:</strong> ZITADEL and dashboard. <strong>Scope:</strong> Medium.</p>
+    </article>
+
+    <div class="checkpoint">
+      <h3>Checkpoint B — Policy and data review</h3>
+      <ul>
+        <li>Tyler approves the temporary password-only exception, username/email interpretation, reset behavior, and production MFA exit criteria.</li>
+        <li>Tyler and the privacy/security owner approve the deletion branch before any PHI-bearing migration.</li>
+        <li>Fresh login, session-security, proxy-boundary, and negative-role tests pass.</li>
+      </ul>
+    </div>
+
+    <article class="task">
+      <h3>Task 8 — Stage, validate, deploy, and roll back by layer</h3>
+      <p><strong>Description:</strong> Close out the work in compatible layers so service, dashboard, database, and ZITADEL policy can each be reverted independently.</p>
+      <p><strong>Acceptance criteria:</strong></p>
+      <ul>
+        <li>Preflight confirms the production token file and recovery access; deploy order is dashboard backward-compatible proxy changes, Authorization Manager fail-closed code, coordinated dashboard-upstream/Compose loopback cutover, smoke verification, ZITADEL policy, and separately approved deletion migration.</li>
+        <li>Each stateful layer has a tested rollback: prior compatible image/Compose configuration, prior dashboard commit/environment, ZITADEL policy export/reapply operation, and operator-approved database recovery that cannot violate the selected retention/purge outcome. The secure rollback floor never restores tokenless non-loopback reachability or obsolete firewall exposure; if an old image cannot run behind loopback with a required token, Authorization Manager stays stopped while its listener and firewall remain closed.</li>
+        <li>Focused/full tests, browser/shell tests, <code>npm audit --omit=dev</code>, Compose validation, real Docker build, <code>git diff --check</code>, staged-secret scan, and PHI-safe live smoke all pass before commit/push/deploy closeout. The selected deletion migration and PHI-safe post-migration schema/file-metadata evidence are mandatory release gates.</li>
+        <li>Production/ePHI enablement remains blocked while authentication is password-only unless the recorded production control or explicitly approved, time-bounded risk exception from Task 7 is satisfied.</li>
+      </ul>
+      <p><strong>Verification:</strong> Preserve sanitized evidence per layer; stop and roll back the current layer on failure rather than continuing. Use separate ordered commits for repository guidance, dashboard/session boundary, service/network boundary, smoke hardening, and the independently approved deletion design.</p>
+      <p><strong>Dependencies:</strong> Tasks 0–7 and both checkpoints. <strong>Scope:</strong> Medium.</p>
+    </article>
+  </section>
+
+  <section>
+    <h2>Issue-to-task mapping</h2>
+    <table>
+      <thead><tr><th>Issue</th><th>Primary task</th><th>Release gate</th></tr></thead>
+      <tbody>
+        <tr><td>Tokenless service listens beyond localhost</td><td>Task 3</td><td>No public/non-loopback tokenless API; production missing-token startup fails; Dell host publication is loopback-only.</td></tr>
+        <tr><td>Token dialog lacks accessibility semantics</td><td>Task 4</td><td>All token surfaces are covered; keyboard/accessibility and replay-safety tests pass.</td></tr>
+        <tr><td>Deletion audit retains full form data</td><td>Task 5</td><td>Retention branch is approved and executed; residual copies are handled, recoverable file cleanup is proven, and schema/file-metadata evidence confirms the selected outcome.</td></tr>
+        <tr><td><code>CLAUDE.md</code> deleted</td><td>Task 0</td><td>Safety guidance is restored before implementation.</td></tr>
+        <tr><td>Smoke tests use <code>curl -k</code></td><td>Task 6</td><td>Certificate, redirect-negative, runner-identity, and Dell-local fixtures pass.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Risks and mitigations</h2>
+    <table>
+      <thead><tr><th>Risk</th><th>Impact</th><th>Mitigation</th></tr></thead>
+      <tbody>
+        <tr><td>Changing host and container listeners in the wrong order breaks the Dell-local connector.</td><td>High</td><td>Task 1 confirms the exact upstream; Task 3 distinguishes container listen address from host publication and requires atomic cutover/rollback.</td></tr>
+        <tr><td>Password-only policy weakens the eventual production ePHI posture.</td><td>High</td><td>Document it as a temporary staging exception with lockout, strong passwords, administrative provisioning, least privilege, and explicit MFA exit criteria.</td></tr>
+        <tr><td>ZITADEL policy mistake locks out administrators.</td><td>High</td><td>Confirm backup PAT/administrator access and effective policy scope before mutation.</td></tr>
+        <tr><td>Deletion cleanup destroys required records, preserves too much PHI, or strands files after a crash.</td><td>High</td><td>Approve one retention branch first; handle residual copies and use recoverable pending-cleanup state.</td></tr>
+        <tr><td>Manual SQLite transaction interleaves with concurrent writes.</td><td>Medium</td><td>Serialize the transaction or use a dedicated connection and add concurrency verification.</td></tr>
+        <tr><td>Public smoke passes while the private connector is broken.</td><td>Medium</td><td>Split public and connector-host smoke evidence and require both for deployment.</td></tr>
+      </tbody>
+    </table>
+  </section>
+
+  <section>
+    <h2>Approved implementation decisions</h2>
+    <ol>
+      <li>Email address is the login username.</li>
+      <li>Password resets are administrator-only.</li>
+      <li>Deletion uses branch A: a minimal audit event plus operational deletion. The implementation retains only the identifiers and security metadata required to prove the deletion event, never the authorization payload or PDF path.</li>
+      <li>Every administratively issued temporary password requires a password change on first login. Two-factor authentication is deferred to a later policy change and must be introduced through a separately reviewed rollout.</li>
+    </ol>
+  </section>
+
+  <section>
+    <h2>Authoritative references</h2>
+    <ul>
+      <li><a href="https://zitadel.com/docs/guides/manage/console/default-settings">ZITADEL Default Settings: Login Behavior and Security</a></li>
+      <li><a href="https://zitadel.com/docs/guides/manage/user/reg-create-user">ZITADEL Register and Create User</a></li>
+      <li><a href="https://zitadel.com/docs/guides/manage/console/projects-overview">ZITADEL Projects, roles, and authentication checks</a></li>
+      <li><a href="https://zitadel.com/docs/guides/solution-scenarios/restrict-console">ZITADEL management-console access and lockout precautions</a></li>
+    </ul>
+  </section>
+</main>
+</body>
+</html>
