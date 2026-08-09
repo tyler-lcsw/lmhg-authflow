@@ -18,10 +18,16 @@ async function startTestServer(options = {}) {
     const previousAllowTokenlessLoopback = process.env.AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK;
     const previousUploadDir = process.env.AUTH_FORMS_UPLOAD_DIR;
     const previousOutputDir = process.env.AUTH_FORMS_OUTPUT_DIR;
+    const previousNodeEnv = process.env.NODE_ENV;
+    const previousDeletionsEnabled = process.env.AUTH_FORMS_DELETIONS_ENABLED;
 
     process.env.DB_PATH = path.join(tmpDir, 'test.sqlite');
     process.env.AUTH_FORMS_UPLOAD_DIR = path.join(tmpDir, 'uploads');
     process.env.AUTH_FORMS_OUTPUT_DIR = path.join(tmpDir, 'output');
+    if (options.nodeEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = options.nodeEnv;
+    if (options.deletionsEnabled === undefined) delete process.env.AUTH_FORMS_DELETIONS_ENABLED;
+    else process.env.AUTH_FORMS_DELETIONS_ENABLED = options.deletionsEnabled ? '1' : '0';
     if (options.requireAuth) {
         process.env.AUTH_FORMS_API_TOKEN = options.apiToken || 'test-api-token';
         delete process.env.AUTH_FORMS_TEST_BYPASS_AUTH;
@@ -81,6 +87,10 @@ async function startTestServer(options = {}) {
             else process.env.AUTH_FORMS_UPLOAD_DIR = previousUploadDir;
             if (previousOutputDir === undefined) delete process.env.AUTH_FORMS_OUTPUT_DIR;
             else process.env.AUTH_FORMS_OUTPUT_DIR = previousOutputDir;
+            if (previousNodeEnv === undefined) delete process.env.NODE_ENV;
+            else process.env.NODE_ENV = previousNodeEnv;
+            if (previousDeletionsEnabled === undefined) delete process.env.AUTH_FORMS_DELETIONS_ENABLED;
+            else process.env.AUTH_FORMS_DELETIONS_ENABLED = previousDeletionsEnabled;
         }
     };
 }

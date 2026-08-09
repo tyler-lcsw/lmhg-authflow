@@ -169,6 +169,7 @@ let authAutoSaveTimeout = null;
 let currentCalendarDate = new Date();
 let allAuthsForCalendar = [];
 let authStepQueue = new Set(['tab-form']);
+let deletionsEnabled = false;
 
 // Sorting State
 let clientsSortField = 'name';
@@ -417,6 +418,23 @@ document.getElementById('btn-add-client').addEventListener('click', () => {
 // === API CALLS & DATA HANDLING ===
 const API_BASE = window.AUTH_FORMS_API_BASE || '/api';
 
+async function loadCapabilities() {
+    try {
+        const response = await fetch(`${API_BASE}/system/status`);
+        if (!response.ok) return;
+        const status = await response.json();
+        deletionsEnabled = status.deletionsEnabled === true;
+    } catch {
+        deletionsEnabled = false;
+    }
+}
+
+function requireDeletionCapability() {
+    if (deletionsEnabled) return true;
+    alert('Deletion is temporarily unavailable.');
+    return false;
+}
+
 // --- Clients ---
 async function loadClients() {
     try {
@@ -446,7 +464,9 @@ function renderClientsTable(data) {
         const actions = appendActionsCell(tr);
         actions.appendChild(createIconButton('View', 'ph ph-eye', () => viewClient(client.id)));
         actions.appendChild(createIconButton('Edit', 'ph ph-pencil-simple', () => editClient(client.id)));
-        actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteClient(client.id), { danger: true }));
+        if (deletionsEnabled) {
+            actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteClient(client.id), { danger: true }));
+        }
         tbody.appendChild(tr);
     });
 }
@@ -1015,6 +1035,7 @@ window.editClient = (id) => {
 
 // Delete Client
 window.deleteClient = async (id) => {
+    if (!requireDeletionCapability()) return;
     if (!confirm('Are you sure you want to delete this client? This will remove all their auth history.')) return;
     
     try {
@@ -1439,7 +1460,9 @@ function renderFacilitiesTable(data) {
         appendTextCell(tr, fac.servicing_provider || '--');
         const actions = appendActionsCell(tr);
         actions.appendChild(createIconButton('Edit', 'ph ph-pencil-simple', () => editFacility(fac.id), { text: 'Edit' }));
-        actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteFacility(fac.id), { danger: true }));
+        if (deletionsEnabled) {
+            actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteFacility(fac.id), { danger: true }));
+        }
         tbody.appendChild(tr);
     });
 }
@@ -1528,6 +1551,7 @@ window.editFacility = (id) => {
 };
 
 window.deleteFacility = async (id) => {
+    if (!requireDeletionCapability()) return;
     if (!confirm("Are you sure you want to delete this provider preset?")) return;
     try {
         const res = await fetch(`${API_BASE}/facilities/${id}`, { method: 'DELETE' });
@@ -1590,7 +1614,9 @@ function renderPcpDirectoryTable(data) {
         appendTextCell(tr, pcp.client_count || 0);
         const actions = appendActionsCell(tr);
         actions.appendChild(createIconButton('Edit', 'ph ph-pencil-simple', () => editPcp(pcp.id)));
-        actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deletePcp(pcp.id), { danger: true }));
+        if (deletionsEnabled) {
+            actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deletePcp(pcp.id), { danger: true }));
+        }
         tbody.appendChild(tr);
     });
 }
@@ -1685,6 +1711,7 @@ document.getElementById('btn-assign-pcp-client').addEventListener('click', async
 });
 
 window.deletePcp = async (id) => {
+    if (!requireDeletionCapability()) return;
     if (!confirm("Are you sure you want to delete this PCP?")) return;
     try {
         const res = await fetch(`${API_BASE}/pcp-directory/${id}`, { method: 'DELETE' });
@@ -2032,10 +2059,9 @@ async function loadAuthHistory(clientId) {
                             ${faxBtn}${refreshBtn}
                             ${uploadIntakeqBtn}
                             ${editAction}
-                            ${successfullyFaxed
-                                ? ''
-                                : `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})"><i class="ph ph-trash"></i></button>`
-                            }
+                            ${deletionsEnabled && !successfullyFaxed
+                                ? `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})"><i class="ph ph-trash"></i></button>`
+                                : ''}
                         </div>
                     </li>
                 `;
@@ -2058,10 +2084,9 @@ async function loadAuthHistory(clientId) {
                             ${faxBtn ? `<span title="Fax">${faxBtn}</span>` : ''}
                             ${uploadIntakeqBtn ? `<span title="Upload to IntakeQ">${uploadIntakeqBtn}</span>` : ''}
                             ${editIconAction}
-                            ${successfullyFaxed
-                                ? ''
-                                : `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})" title="Delete"><i class="ph ph-trash"></i></button>`
-                            }
+                            ${deletionsEnabled && !successfullyFaxed
+                                ? `<button class="btn btn-ghost" style="color:var(--danger);" onclick="deleteAuth(${item.id})" title="Delete"><i class="ph ph-trash"></i></button>`
+                                : ''}
                         </div>
                     </td>
                 `;
@@ -2254,6 +2279,7 @@ function clearDeletedAuthFromActiveForm(id) {
 }
 
 window.deleteAuth = async (id) => {
+    if (!requireDeletionCapability()) return;
     if (!confirm("Are you sure you want to delete this auth request?")) return;
     try {
         const res = await fetch(`${API_BASE}/auth-requests/${id}`, { method: 'DELETE' });
@@ -2829,7 +2855,9 @@ function renderMcoTable() {
         appendTextCell(tr, entry.mco_name || '--');
         appendTextCell(tr, entry.fax_number || '--');
         const actions = appendActionsCell(tr);
-        actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteMcoEntry(entry.id), { danger: true }));
+        if (deletionsEnabled) {
+            actions.appendChild(createIconButton('Delete', 'ph ph-trash', () => deleteMcoEntry(entry.id), { danger: true }));
+        }
         tbody.appendChild(tr);
     });
 }
@@ -2865,6 +2893,7 @@ document.getElementById('btn-add-mco').addEventListener('click', async () => {
 });
 
 window.deleteMcoEntry = async (id) => {
+    if (!requireDeletionCapability()) return;
     if (!confirm('Delete this MCO fax entry?')) return;
     try {
         await fetch(`${API_BASE}/mco-fax-directory/${id}`, { method: 'DELETE' });
@@ -3307,6 +3336,7 @@ window.nextMonth = () => {
 
 // Initialize Application Data
 async function initApp() {
+    await loadCapabilities();
     await loadClients();
     await loadFacilities();
     await loadMcoDirectory();

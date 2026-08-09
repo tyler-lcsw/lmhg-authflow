@@ -9,6 +9,7 @@ services:
       NODE_ENV: production
       HOST: 0.0.0.0
       AUTH_FORMS_API_TOKEN_FILE: /run/secrets/auth_manager_api_token
+      AUTH_FORMS_DELETIONS_ENABLED: ${AUTH_FORMS_DELETIONS_ENABLED:-0}
       DB_PATH: /data/database.sqlite
       AUTH_FORMS_UPLOAD_DIR: /data/uploads
       AUTH_FORMS_OUTPUT_DIR: /data/output

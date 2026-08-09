@@ -30,6 +30,12 @@ A trusted staff subject is not yet retained. That field must not be added until
 the dashboard and Authorization Manager share a signed actor assertion with
 issuer, audience, request binding, expiry, key rotation, and replay protection.
 
+Until that contract exists, the production launch configuration denies every
+API `DELETE` request before route or database lookup and hides the corresponding
+UI controls. The minimal deletion audit remains tested and available for a
+future controlled re-enable; it is not sufficient by itself to authorize
+destructive actions at initial go-live.
+
 ## File cleanup outbox
 
 The audit table never stores a PDF path. A separate

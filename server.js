@@ -27,6 +27,9 @@ function readSecretFile(pathValue) {
 }
 const configuredApiToken = process.env.AUTH_FORMS_API_TOKEN || readSecretFile(process.env.AUTH_FORMS_API_TOKEN_FILE);
 const apiToken = configuredApiToken || '';
+const deletionsEnabled = process.env.AUTH_FORMS_DELETIONS_ENABLED === '1' || (
+    process.env.NODE_ENV !== 'production' && process.env.AUTH_FORMS_DELETIONS_ENABLED !== '0'
+);
 const uploadDir = process.env.AUTH_FORMS_UPLOAD_DIR || path.join(__dirname, 'uploads');
 const outputDir = process.env.AUTH_FORMS_OUTPUT_DIR || path.join(__dirname, 'output');
 
@@ -181,6 +184,11 @@ function requireApiToken(req, res, next) {
         return res.status(401).json({ error: "API token required" });
     }
     return next();
+}
+
+function enforceDeletionHold(req, res, next) {
+    if (req.method !== 'DELETE' || deletionsEnabled) return next();
+    return res.status(403).json({ error: 'Deletion is temporarily unavailable.' });
 }
 
 function applyServicingFacilityDefaults(formData, settings = {}) {
@@ -600,6 +608,7 @@ app.use(express.json());
 app.use(createRequestTracer());
 app.use(express.static('public')); // serve frontend
 app.use('/api', requireApiToken);
+app.use('/api', enforceDeletionHold);
 app.set('view engine', 'ejs');
 
 // Multer setup for handling PDF uploads
@@ -664,6 +673,7 @@ app.get('/api/system/status', async (req, res) => {
             service: 'authorization-manager',
             dataClass: 'confirmed_ephi',
             safeForAgentPolling: true,
+            deletionsEnabled,
             pendingFileCleanup: pending.count,
             time: new Date().toISOString()
         });

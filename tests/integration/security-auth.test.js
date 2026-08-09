@@ -54,6 +54,58 @@ test('API routes require the configured API token', async () => {
     }
 });
 
+test('production denies every DELETE before route lookup unless explicitly enabled', async () => {
+    const srv = await startTestServer({
+        requireAuth: true,
+        apiToken: 'secret-token',
+        nodeEnv: 'production'
+    });
+    try {
+        const denied = await callJson(srv.baseUrl, '/api/future-resource/999999', {
+            method: 'DELETE',
+            headers: srv.authHeaders
+        });
+        assert.equal(denied.status, 403);
+        assert.deepEqual(denied.body, { error: 'Deletion is temporarily unavailable.' });
+
+        const status = await callJson(srv.baseUrl, '/api/system/status', {
+            headers: srv.authHeaders
+        });
+        assert.equal(status.status, 200);
+        assert.equal(status.body.deletionsEnabled, false);
+
+        const getUnknown = await callJson(srv.baseUrl, '/api/future-resource/999999', {
+            headers: srv.authHeaders
+        });
+        assert.equal(getUnknown.status, 404);
+    } finally {
+        await srv.close();
+    }
+});
+
+test('production DELETE hold requires an explicit enable setting', async () => {
+    const srv = await startTestServer({
+        requireAuth: true,
+        apiToken: 'secret-token',
+        nodeEnv: 'production',
+        deletionsEnabled: true
+    });
+    try {
+        const response = await callJson(srv.baseUrl, '/api/future-resource/999999', {
+            method: 'DELETE',
+            headers: srv.authHeaders
+        });
+        assert.equal(response.status, 404);
+
+        const status = await callJson(srv.baseUrl, '/api/system/status', {
+            headers: srv.authHeaders
+        });
+        assert.equal(status.body.deletionsEnabled, true);
+    } finally {
+        await srv.close();
+    }
+});
+
 test('API routes fail closed when no API token is configured', async () => {
     const srv = await startTestServer({ disableAuthWithoutBypass: true });
     try {

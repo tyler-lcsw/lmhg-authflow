@@ -26,6 +26,14 @@ Deletion uses the approved minimal-event design and a durable file-cleanup
 outbox. Review [MINIMAL_DELETION_AUDIT.md](./MINIMAL_DELETION_AUDIT.md) before
 running the destructive legacy-audit migration or approving backup disposition.
 
+For the initial go-live, all API `DELETE` requests are denied before route or
+record lookup and the five delete controls are hidden. The production Compose
+default is `AUTH_FORMS_DELETIONS_ENABLED=0`. This keeps the existing read,
+create, edit, PDF, fax, and IntakeQ workflows available while signed actor
+attribution is deferred. Do not set the flag to `1` for go-live. Re-enabling
+deletion requires the dashboard and Authorization Manager to verify a dedicated,
+short-lived, request-bound signed actor assertion with replay protection.
+
 The container listens on `0.0.0.0:3000` inside its private Compose network so
 Docker can forward traffic to it. The host publishes that port only as
 `127.0.0.1:3100`; it must not be published on a LAN or Tailscale address.
@@ -107,3 +115,5 @@ Final staging login smoke is manual because it needs a real ZITADEL session:
 5. Confirm `/api/modules` shows `authorization-manager`.
 6. Open `Authorization Manager`, accept the ePHI confirmation, and verify the
    app shell loads. Do not use a PHI API response as smoke evidence.
+7. Confirm delete controls are absent and a synthetic `DELETE` request receives
+   the fixed denial status without checking whether the target exists.

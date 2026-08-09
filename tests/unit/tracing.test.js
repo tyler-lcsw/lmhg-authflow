@@ -42,6 +42,8 @@ test('request tracer emits request completion with trace id and duration', async
         assert.equal(entries[0].status, 200);
         assert.equal(entries[0].trace_id, body.traceId);
         assert.equal(typeof entries[0].duration_ms, 'number');
+        assert.equal(entries[0].ip, undefined);
+        assert.equal(entries[0].user_agent, undefined);
     } finally {
         await server.close();
     }
@@ -144,4 +146,10 @@ test('error logger drops query strings while preserving the route path', async (
 
 test('safeRequestPath preserves route path when URL parsing falls back', () => {
     assert.equal(safeRequestPath({ originalUrl: '/ok?token=SECRET' }), '/ok');
+});
+
+test('safeRequestPath templates resource identifiers before trace persistence', () => {
+    assert.equal(safeRequestPath({ originalUrl: '/api/auth-requests/123?token=SECRET' }), '/api/auth-requests/:id');
+    assert.equal(safeRequestPath({ originalUrl: '/api/clients/456' }), '/api/clients/:id');
+    assert.equal(safeRequestPath({ originalUrl: '/api/pcp-directory/789' }), '/api/pcp-directory/:id');
 });

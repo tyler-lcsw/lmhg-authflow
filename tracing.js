@@ -19,11 +19,14 @@ function redactHeaders(headers = {}) {
 
 function safeRequestPath(req = {}) {
     const rawPath = req.originalUrl || req.url || req.path || '';
+    let pathname;
     try {
-        return new URL(rawPath, 'http://auth-forms.local').pathname;
+        pathname = new URL(rawPath, 'http://auth-forms.local').pathname;
     } catch {
-        return String(rawPath).split('?')[0];
+        pathname = String(rawPath).split('?')[0];
     }
+    return pathname
+        .replace(/\/(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})(?=\/|$)/gi, '/:id');
 }
 
 function createFileSink(logFile = process.env.AUTH_FORMS_TRACE_LOG || DEFAULT_LOG_FILE) {
@@ -66,9 +69,7 @@ function createRequestTracer({ sink = createFileSink() } = {}) {
                 method: req.method,
                 path: safeRequestPath(req),
                 status: res.statusCode,
-                duration_ms: Math.round(durationMs * 100) / 100,
-                ip: req.ip,
-                user_agent: req.get('user-agent') || null
+                duration_ms: Math.round(durationMs * 100) / 100
             }));
         });
 
