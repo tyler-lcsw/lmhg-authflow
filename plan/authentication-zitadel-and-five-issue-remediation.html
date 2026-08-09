@@ -258,13 +258,13 @@ Forbidden paths:
 
     <article class="task">
       <h3>Task 7 — Configure and prove username/password-only ZITADEL staging</h3>
-      <p><strong>Description:</strong> Apply the initial ZITADEL policy at the verified effective scope with a pre-change export, exact API/console operations, and tested rollback. This phase requires a separately identified ZITADEL project/application and dashboard staging origin connected only to synthetic/non-PHI data; if that environment does not yet exist, creating and proving it is part of this task.</p>
+      <p><strong>Description:</strong> Apply the initial ZITADEL policy at the verified effective scope with a pre-change export, exact API/console operations, and tested rollback. Use the existing LMHG organization, Dashboard project, and applications. Do not create a separate organization. Synthetic/non-PHI accounts may be used inside the existing organization when a test requires them.</p>
       <p><strong>Acceptance criteria:</strong></p>
       <ul>
         <li>The change record identifies instance/org/project inheritance, exact settings and operations, administrator owner, pre-change export, rollback operations, and treatment of users with existing MFA/passkey factors.</li>
         <li>Effective policy allows username/password and disables registration, external IDP creation/login, passkeys/passwordless, Force MFA, Force local MFA, and MFA-init prompting for the initial phase; password complexity and nonzero lockout are set.</li>
-        <li>A fresh non-PHI staging user is administratively created with <code>human.password.changeRequired=true</code>, no factors, and only <code>authorization_operator</code>; backup administrator/PAT recovery is verified before mutation.</li>
-        <li>The change record names the isolated staging tenant/project/application, dashboard origin, connector target, and synthetic-data boundary. Password-only access is not promoted to the PHI-bearing production module until the production authentication control is met or a named security/privacy owner approves a time-bounded risk exception and compensating controls.</li>
+		<li>When a temporary-password exercise is authorized, a non-PHI user in the existing LMHG organization is created with <code>human.password.changeRequired=true</code>, no factors, and only the required project roles. Replacement-password entry remains a user-controlled action and is deferred from the current setup closeout.</li>
+		<li>The change record names the existing LMHG organization/project/application, dashboard origin, connector target, and synthetic-data boundary. Any later activation decision is a separate approval and is not part of setup validation.</li>
       </ul>
       <p><strong>Verification:</strong> First-login password change, callback/session properties, <code>/api/me</code> identity shape, module and ePHI gate, shell-only Authorization Manager launch, logout, no tokens in web storage, absent registration/external/passkey/MFA paths, and denial without <code>authorization_operator</code>. Then execute a rollback dry run or reversible test at the same policy scope.</p>
       <p><strong>Dependencies:</strong> Tasks 1–4. <strong>Systems:</strong> ZITADEL and dashboard. <strong>Scope:</strong> Medium.</p>
@@ -273,7 +273,7 @@ Forbidden paths:
     <div class="checkpoint">
       <h3>Checkpoint B — Policy and data review</h3>
       <ul>
-        <li>Tyler approves the temporary password-only exception, username/email interpretation, reset behavior, and production MFA exit criteria.</li>
+		<li>Username/email interpretation and administrator-only reset behavior are approved for setup. Replacement-password entry, any later MFA rollout, and any activation decision remain separate deferred actions.</li>
         <li>Tyler and the privacy/security owner approve the deletion branch before any PHI-bearing migration.</li>
         <li>Fresh login, session-security, proxy-boundary, and negative-role tests pass.</li>
       </ul>
@@ -287,7 +287,7 @@ Forbidden paths:
         <li>Preflight confirms the production token file and recovery access; deploy order is dashboard backward-compatible proxy changes, Authorization Manager fail-closed code, coordinated dashboard-upstream/Compose loopback cutover, smoke verification, ZITADEL policy, and separately approved deletion migration.</li>
         <li>Each stateful layer has a tested rollback: prior compatible image/Compose configuration, prior dashboard commit/environment, ZITADEL policy export/reapply operation, and operator-approved database recovery that cannot violate the selected retention/purge outcome. The secure rollback floor never restores tokenless non-loopback reachability or obsolete firewall exposure; if an old image cannot run behind loopback with a required token, Authorization Manager stays stopped while its listener and firewall remain closed.</li>
         <li>Focused/full tests, browser/shell tests, <code>npm audit --omit=dev</code>, Compose validation, real Docker build, <code>git diff --check</code>, staged-secret scan, and PHI-safe live smoke all pass before commit/push/deploy closeout. The selected deletion migration and PHI-safe post-migration schema/file-metadata evidence are mandatory release gates.</li>
-        <li>Production/ePHI enablement remains blocked while authentication is password-only unless the recorded production control or explicitly approved, time-bounded risk exception from Task 7 is satisfied.</li>
+		<li>Setup closeout records the password-only posture without making an activation decision. Any later activation review must evaluate the then-current authentication controls and approved risk treatment.</li>
       </ul>
       <p><strong>Verification:</strong> Preserve sanitized evidence per layer; stop and roll back the current layer on failure rather than continuing. Use separate ordered commits for repository guidance, dashboard/session boundary, service/network boundary, smoke hardening, and the independently approved deletion design.</p>
       <p><strong>Dependencies:</strong> Tasks 0–7 and both checkpoints. <strong>Scope:</strong> Medium.</p>
@@ -331,6 +331,27 @@ Forbidden paths:
       <li>Deletion uses branch A: a minimal audit event plus operational deletion. The implementation retains only the identifiers and security metadata required to prove the deletion event, never the authorization payload or PDF path.</li>
       <li>Every administratively issued temporary password requires a password change on first login. Two-factor authentication is deferred to a later policy change and must be introduced through a separately reviewed rollout.</li>
     </ol>
+  </section>
+
+  <section>
+    <h2>Setup completion record — 2026-08-09</h2>
+    <p><strong>Status:</strong> Setup validation complete. This section is not a launch recommendation or authorization.</p>
+    <table>
+      <thead><tr><th>Setup gate</th><th>Result</th><th>Evidence boundary</th></tr></thead>
+      <tbody>
+		<tr><td>Runtime revisions</td><td class="confirmed">Dashboard <code>e6f165d</code>; Authorization Manager <code>caf93e7</code></td><td>Revision and service metadata only.</td></tr>
+		<tr><td>Email/password policy</td><td class="confirmed">Effective instance and LMHG organization targets applied; organization-domain suffix disabled.</td><td>Selected booleans only; no identities or credentials.</td></tr>
+		<tr><td>Project authorization</td><td class="confirmed"><code>authorization_operator</code> created; role assertion, authorization-required, and project-access-required enabled.</td><td>Generic role and flag names only.</td></tr>
+		<tr><td>Least privilege</td><td class="confirmed">Fresh authorization with only <code>authorization_operator</code> allowed Authorization Manager after ePHI confirmation and hid developer/admin/audit/system-health surfaces.</td><td>Visible/hidden booleans only.</td></tr>
+		<tr><td>Live revocation</td><td class="confirmed">Fresh authorization with only <code>clinical</code> kept base Dashboard access, hid Authorization Manager, and returned <code>403</code> from its protected status endpoint.</td><td>Status only; no response body or record access.</td></tr>
+		<tr><td>Role restoration</td><td class="confirmed">Original <code>developer</code> plus <code>authorization_operator</code> assignment restored and verified through a fresh Dashboard authorization.</td><td>Generic role keys only.</td></tr>
+		<tr><td>ePHI session boundary</td><td class="confirmed">Local Dashboard session invalidation removed prior confirmation state; every fresh authorization required confirmation again.</td><td>No cookies, tokens, sessions, or storage values captured.</td></tr>
+		<tr><td>Destructive-action hold</td><td class="confirmed">Authenticated generated/nonexistent DELETE attempts returned <code>403</code> at the Dashboard proxy, a future proxy path, and Authorization Manager; delete controls remained absent.</td><td>Status only; identifiers and routes omitted from evidence.</td></tr>
+		<tr><td>Replacement-password exercise</td><td class="partial">Deferred by owner direction.</td><td>No password was requested, entered, captured, or changed.</td></tr>
+		<tr><td>Launch decision</td><td class="partial">Out of scope.</td><td>No go/no-go conclusion and no launch action.</td></tr>
+      </tbody>
+    </table>
+    <p><strong>Operational note:</strong> ZITADEL userinfo obtained with an already-issued access token is not sufficient proof of a newly changed project-role assignment. After an administrative role change or password reset, invalidate the local Dashboard session and require a fresh OIDC authorization before relying on the new role set.</p>
   </section>
 
   <section>
