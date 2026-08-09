@@ -33,12 +33,21 @@ Production requires the mounted API token. The explicit tokenless development
 override (`AUTH_FORMS_ALLOW_TOKENLESS_LOOPBACK=1`) is loopback-only and is not
 an approved Dell deployment setting.
 
+Build from a clean, exact checkout and embed its revision in the image:
+
+```sh
+AUTH_FORMS_VCS_REF="$(git rev-parse HEAD)" docker compose -f deploy/dell/compose.yaml up -d --build
+```
+
+The resulting image label `org.opencontainers.image.revision` is safe release
+metadata and must match the approved source commit.
+
 ## Auth Flow
 
 ZITADEL authenticates users into the staff dashboard. The dashboard creates an
 opaque HttpOnly application session, maps ZITADEL project roles to dashboard
-roles, requires `developer` for the Authorization Manager module during the
-current integration stage, requires a short-lived session-bound ePHI
+roles, requires `authorization_operator` for the Authorization Manager module,
+requires a short-lived session-bound ePHI
 confirmation, and then proxies `/api/legacy/auth-manager/*` to Authorization
 Manager while injecting the legacy `x-auth-token` server-side.
 
@@ -55,8 +64,8 @@ Approved initial ZITADEL policy for staging users:
 - every temporary password must be replaced on first login; the API
   equivalent for ZITADEL v2 user creation is
   `human.password.changeRequired=true`;
-- assign `developer` only to the staging smoke user that needs Authorization
-  Manager access;
+- assign `authorization_operator` to the staging smoke user that needs
+  Authorization Manager access; do not grant `developer` for this purpose;
 - 2FA is intentionally deferred and will be added later as a ZITADEL policy;
   it is not silently treated as active during this password-only stage.
 
@@ -91,7 +100,7 @@ Final staging login smoke is manual because it needs a real ZITADEL session:
 1. In ZITADEL, administratively create or select a non-PHI test user whose email
    address is the username, assign a temporary password, and require a password
    change on first login. Do not enable self-service password reset.
-2. Assign the user the `developer` role in ZITADEL project
+2. Assign the user the `authorization_operator` role in ZITADEL project
    `374342710909206531`.
 3. Open `https://dashboard.lmhg.app/api/login`.
 4. Complete the first-login password reset.

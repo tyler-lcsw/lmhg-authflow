@@ -2,6 +2,8 @@ services:
   authorization-manager:
     build:
       context: ../..
+      args:
+        VCS_REF: ${AUTH_FORMS_VCS_REF:-unknown}
     restart: unless-stopped
     environment:
       NODE_ENV: production
