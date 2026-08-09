@@ -19,9 +19,6 @@ RUN npm ci --omit=dev
 
 FROM node:22-bookworm-slim
 
-ARG VCS_REF=unknown
-LABEL org.opencontainers.image.revision="$VCS_REF"
-
 ENV NODE_ENV=production \
     PUPPETEER_SKIP_DOWNLOAD=1 \
     PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
@@ -41,6 +38,9 @@ COPY --from=deps --chown=node:node /app/package*.json ./
 COPY --chown=node:node . .
 RUN mkdir -p /data \
     && chown node:node /data
+
+ARG VCS_REF=unknown
+LABEL org.opencontainers.image.revision="$VCS_REF"
 
 USER node
 
